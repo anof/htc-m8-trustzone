@@ -270,3 +270,24 @@ Consequences:
 * Writing `misc` is therefore the cheapest way to steer hboot's boot-time
   behaviour from the AP, and it is the recommended starting point for any
   further hboot fuzzing/RE.
+
+### The ATS state machine is wired to that dispatcher
+
+`f530048` (the ATS enable state machine, the only writer of the persistent
+ATS debug flag) has exactly **one** caller in the whole image:
+
+```
+0x0f50e406  bl f530048        <- the BCB command executor
+```
+
+and its first act is `if (!f53b5f8()) return;` — i.e. it only runs on a
+S-ON device. It then reads an ATS record through `f541870()` and checks for
+the magics `ISML` (0x4d4c5349) / `MLML` (0x4d4c4d4c) before calling the same
+`f566ed4()` "keycard" service that gates `writesecureflag`.
+
+So the *only* software path that can set `security[0x400]` (disable eMMC
+write protection for the next boot) is: a BCB command in `misc` → the ATS
+record check → the keycard/ATS service. A valid ATS record plus the
+service's OK byte are still required; the record's origin is what a future
+session should chase (`f541870` reads it out of a RAM structure whose
+contents are populated at boot).
