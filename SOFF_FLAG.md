@@ -402,6 +402,66 @@ does). If it does, the ZIP parser is a reachable, fuzzable memory-safety
 surface inside hboot — the same class of bug the Tegra-era "torpedo"
 exploit used to patch hboot images.
 
+### Confirmed: the ZIP container is parsed structurally, with no signature check
+
+`f525fe2(ptr,len,flag,&out)` allocates a 0x28-byte context and calls
+`f527cd8`, which is a plain **unzip-style structural parser**:
+
+```
+scan backwards from the end of the buffer for a 'P' byte,
+  read32 -> compare with 0x06054b50   (ZIP EOCD signature "PK\5\6")
+parse EOCD fields (disk nos, entry counts, cd size/offset) into ctx+8..ctx+0x1c
+  ctx+0x1c = first central-directory entry pointer
+validate ctx+0x18 (comment length) and bounds (entry+0x15 < len)
+then walk central-directory entries: read32 -> compare with 0x02014b50
+  ("PK\1\2"), read name/extra/comment lengths, etc.
+```
+
+There is **no crypto anywhere in it** — no call into the RSA/SHA dispatchers
+(`f528670`/`f528682`/`f5413a0` family) in either `f525fe2` or `f527cd8`.
+The signature block of an HTC container is only *copied* ("adopting the
+signature contained in this image...").
+
+So on the update path the sequence is:
+
+```
+print "ZIP Header Checking..."
+f525fe2(buf,len,...)            <- pure structure parse, no verification
+  if parse OK -> "ZIP Info Parsing..." -> f509f8c(ctx) -> f50b278(ctx,len,1)  <- apply
+  if parse fails -> if (S-OFF) retry at buf+0x100 (raw ZIP), else fail
+```
+
+Where the per-image signature check (if any) happens is inside the apply
+path `f50b278` — that is the next thing to read, and it is the most
+promising place yet for a reachable, unauthenticated hboot write path.
+
+### The apply path starts with metadata checks, not signature checks
+
+`f50b278(ctx,len,flag)` (the RUU/ZIP apply) begins with:
+
+```
+check model ID    ("Checking Model ID..." / "INFOchecking model ID...")
+check custom ID   ("Checking Custom ID...")
+                  -> "INFO Disable Main and hboot version checking for ATS debug"
+check main ver    ("Checking Main Version...")
+check hboot ver   ("Checking Hboot Version...")
+                  -> "INFObypassing hboot version check on dev. device..."
+   ... and later: "hboot"   <- the ZIP engine knows how to flash hboot itself
+```
+
+These are **metadata checks** (MID / CID / version strings read from the
+package), not cryptography, and the ZIP container itself was already parsed
+without any crypto. So the working hypothesis for the next session is:
+
+> A hand-built HTC-style ZIP whose metadata claims the right MID/CID and a
+> high version may be accepted far enough to reach the per-image flashing
+> code — where the only remaining question is whether each image is
+> signature-checked before it is written.
+
+Test vehicle: `fastboot oem rebootRUU` (RUU mode) then
+`fastboot flash zip <crafted.zip>`, or the `misc` BCB command
+`update-zip` if the SD/download source can be pointed at our data.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
