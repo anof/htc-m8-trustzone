@@ -1,0 +1,12 @@
+# Never commit vendor firmware or device-unique data.
+*.img
+*.bin
+*.apk
+*.tgz
+*.ko
+*.o
+unlock_token.txt
+dm*.txt
+dmesg*.txt
+fuzz_*.json
+fuzz_*.log
