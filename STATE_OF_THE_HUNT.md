@@ -67,6 +67,36 @@ Tools built for this: `edl_prep/` (candidate programmers), `s1_firehose.py`
 `night_loop.sh` (unattended cycles), `ensure_root.py` (UI-dump driven KingRoot
 automation), `kmod/dload` (magics), `kmod/dloadrd` (read back IMEM markers).
 
+## 2026-09-13, 04:00 — the IMEM slot is the HTC *restart reason*
+
+The kernel header `arch/arm/mach-msm/include/mach/htc_restart_handler.h`
+defines exactly the values hboot writes into IMEM `0xFE80565C`:
+
+```
+RESTART_REASON_BOOT_BASE   0x77665500
+  BOOTLOADER 0x77665500   REBOOT 0x77665501   RECOVERY 0x77665502
+  ERASE_EFS  0x77665503   RAMDUMP 0x776655AA  POWEROFF 0x776655BB
+  ERASE_FLASH 0x776655EF
+RESTART_REASON_OEM_BASE    0x6F656D00 | code
+```
+
+So the "dload magics" seen earlier are really HTC restart reasons: hboot writes
+`0x77665501` (reboot) when its `to_sbldload` path asks for a download window,
+and the `0x776655aa` read back after boots is the RAMDUMP reason.
+
+hboot has a boot-mode table (`androidboot.mode=...`: `normal`, `recovery`,
+`recovery_manual`, `gift_mode`, `repartition`, `power_test`,
+`offmode_charging`, `mfgkernel`, `9kramdump*`, router modes) at
+`0x0F5A0D28`+, plus `resetgift` / `boot-repartition` /
+`update-zip-repartition` handling and a "gift file" mechanism.
+
+**The eMMC write protection is only armed for boot modes 3 and 0xe**, so the
+next experiment is: drive hboot into another mode (restart reason / OEM code /
+gift / repartition) that still reaches a usable system, then write the S-OFF
+dword from that environment. Raw eMMC attempts from normal-mode Android
+(CMD29 / EXT_CSD[166] write / CMD24) are all silently discarded, consistent
+with the arming being done by hboot rather than the card.
+
 Device: `HT45FSF02406`, HTC6525LVW (`m8_wlv`), MID `0P6B20000`,
 CID `VZW__001`, hboot 3.19.0.0000, firmware 4.17.605.17, Android 5.0.1,
 MSM8974, S-ON, bootloader LOCKED. Root available only via KingRoot
