@@ -114,6 +114,37 @@ calls the stock recovery image the "minikernel"). `EnterMinikernel` = boot
 into recovery; there is no privileged factory environment behind it. Lead
 closed.
 
+## Strongest remaining lead: the eMMC WP is armed per *boot mode*
+
+Every `partition_write_prot_mmc()` call site is guarded like this
+(e.g. `0x0f56aa60`):
+
+```
+bl f50e7f8            ; boot mode  (config item #6)
+cmp r0, #3
+beq  do_protect
+cmp r0, #0xe
+bne  skip             ; <- any other mode: NO eMMC write protection
+do_protect: partition_write_prot_mmc(start, end, 1)
+```
+
+So the hardware write protection is **only armed when the boot mode is 3 or
+0xe**. If the device can be brought up in a different mode while still
+starting Android, the AP could write `pg1fs` — and root is enough to flip
+the S-OFF dword.
+
+Where the mode comes from: at `0x0f50ba36` hboot walks a list of
+`name=value` strings (`sscanf`-style parse via `f53a678`) starting at
+`[base+0x65C]`, and ORs the parsed values into config items 0..10 with the
+setter `f50d5ec` — item #6 is the mode. `f50e7f8` then reads item #6 (with a
+special case when bit 12 is set and boot-command == 0x17).
+
+Next step: find which store that `name=value` list is read from (it is
+indexed off the same 0x0F64xxxx block that the cmdline fragments come from)
+and which values produce modes other than 3/0xe — ideally one that still
+boots Android. If the list has an origin the AP can write (`misc`, `pdata`,
+`custdata`), this becomes a real path.
+
 ## Tools in this repo that made it possible
 
 `tools/xref2.py` (drift-free PC-relative string xrefs, 2730 refs),
