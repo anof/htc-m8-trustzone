@@ -466,6 +466,21 @@ static int do_flagsoff(int fd)
 		printf("  already S-OFF (flag=%u) - nothing to do\n", orig[0]);
 		return 0;
 	}
+	/* safety gate: only touch this sector if it really is pg1fs_security:
+	 * {level>1, unlock=0, jtag_disable=1, zeros} - anything else means we
+	 * are at the wrong LBA and must not write. */
+	for (i = 12; i < 64; i++)
+		if (orig[i]) break;
+	if (orig[1] || orig[2] || orig[3] || orig[4] || orig[5] || orig[6] ||
+	    orig[7] || orig[8] != 1 || orig[9] || orig[10] || orig[11] ||
+	    i != 64 || orig[0] > 3) {
+		printf("  ABORT: LBA %d does not look like pg1fs_security "
+		       "(want 3,0,1,0.. got %u,%u,%u,.. first non-zero tail "
+		       "at %d)\n", FLAG_LBA, orig[0], orig[4], orig[8], i);
+		return -1;
+	}
+	printf("  sector verified as pg1fs_security (level=%u unlock=%u "
+	       "jtag_dis=%u)\n", orig[0], orig[4], orig[8]);
 	orig[0] = 0; orig[1] = 0; orig[2] = 0; orig[3] = 0;
 	if (do_wr(fd, FLAG_LBA, orig, "write S-OFF flag") < 0)
 		return -1;
