@@ -1,7 +1,7 @@
 # HTC One (M8) Verizon — TrustZone port findings
 
 Date: 2026-09-12
-Device: HTC One (M8) Verizon, hboot 3.19.0.0000, S-ON, CID VZW__001, MID 0P6B20000
+Device: HT45FSF02406, hboot 3.19.0.0000, S-ON, CID VZW__001, MID 0P6B20000
 TZ image: `tz.img` sha256 69fbfaf6...502216 / TZ.BF.2.0-2.0.0114
 
 ## What was accomplished
