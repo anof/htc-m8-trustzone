@@ -178,3 +178,94 @@ Editing the CID in `misc` and rebooting is the obvious experiment, and it is
 refuses to boot on mismatch, the device will not come back up, and `misc`
 cannot be restored from fastboot (writing partitions needs an unlocked
 bootloader). The offline trace above should be done first.
+
+---
+
+# Paths 3 and 4 — results
+
+## Correction to an earlier reading
+
+`0xf539ff4` is **memset**, not memcpy (it is called with `r1 = 0` to clear
+buffers), and `0xf539ee4` is memcpy. An earlier pass mis-identified them and
+produced a spurious "memcpy from NULL" reading in the unlock-token handler.
+The locked branch is simply `memset`-ing five stack buffers. No such bug.
+
+## (3) The unlock-token verifier
+
+The verifier chain, fully traced:
+
+```
+0x0f51dcf4  memset x5                  ; clear stack buffers
+0x0f51dd3a  get_cid() -> memcpy(sp+0x40, cid, 8)
+0x0f51dd4c  get_field(+0x704C) -> memcpy(sp+0x48, field, 12)
+0x0f51dd60  loop x4 reading four accessors into a 16-byte block
+0x0f51ddaa  assemble 61-byte device-specific plaintext at sp+0xb8
+0x0f51dde0  bl 0xf528670              ; crypto dispatch, type 2
+0x0f51ddf8  mov.w r2, #0x10001        ; RSA exponent 65537
+0x0f51de06  bl 0xf528682              ; rsa_verify
+0x0f51de0a  cbz r0, "unlock token check failed"
+0x0f51de0c  "unlock token check successfully"
+```
+
+`rsa_verify` (0x0f528682) validates arguments, then dispatches on exponent:
+`e = 3` → `0x0f528820`, `e = 65537` → `0x0f5288e2`. The e=65537 path uses a
+256-byte (2048-bit) modulus and a standard square-and-multiply loop of eight
+Montgomery multiplications plus the final one.
+
+**Assessment:** this is stock-looking RSA verification over a blob that
+includes the device CID. Reusing another device's token fails because the
+plaintext is device-specific. Forging requires breaking RSA, or finding a
+flaw in the modexp — no flaw is visible, and auditing it fully would be a
+substantial cryptographic RE effort with low expected yield.
+
+## (4) Reachable-while-locked code paths
+
+All ~45 OEM commands are reachable via `fastboot oem <name>` on a LOCKED
+bootloader — that is the real attack surface, and it is entirely on our side
+of the XPU.
+
+The handler block is `0x0f514f00`–`0x0f516200`, contiguous Thumb with no
+padding. Every `memcpy`/`memset` in it (30 call sites) was inspected with its
+argument setup:
+
+| Address | Length source |
+|---|---|
+| `0x0f515016` | `strlen()` of the source — bounded by the string |
+| `0x0f5150ce` | constant 8 |
+| `0x0f5150dc` | constant 0xc |
+| `0x0f515194`–`0x0f5151c4` | constants 0x10, 0xc, 9, 8, 0x10 |
+| `0x0f515222` | constant 0x20 |
+| `0x0f515b6e` | constant 8 |
+
+**No attacker-controlled length reaches a copy.** The one computed length is
+`strlen` of a fixed source string.
+
+### `refurbish` — the reported crash does not reproduce from the code
+
+Handler at `0x0f5157ee` (reached from the command table):
+
+```
+strcmp(arg, "HPST_NV_SUCCESS")   -> print
+strcmp(arg, "HPST_NV__FAILED")   -> print
+strcmp(arg, "unlockstatus")      -> f5030b8(3) ; prints "device unlocked!!"/"device locked!!"
+default                          -> "refurbish failed!! Unknown result!!"
+```
+
+This matches live observation exactly (`oem refurbish unlockstatus` →
+`device locked!!`). But the default path is just `ldr r0, =string; bl printf`
+— it cannot crash. So the earlier `oem refurbish 1` crash was **not** in this
+handler; it must be in the fastboot-protocol layer that parses the command
+line *before* the OEM dispatch, or in argument tokenisation. That is now the
+most interesting unexplained result, and it is reachable while locked.
+
+## State of play
+
+No exploitable bug found in either path yet. What has changed is that hboot is
+no longer a black box: load address, section layout, the complete OEM command
+table with handler addresses, a 2,730-entry string-xref database, and a
+working disassembly method are all in place (`tools/xref2.py`,
+`tools/resolve.py`, `tools/hbwalk.py`).
+
+The single best remaining lead is the **unexplained crash on a malformed
+`oem` argument**. It is reproducible, it is on a locked device, and it is in
+code that parses input we fully control.
