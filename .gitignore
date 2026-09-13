@@ -10,3 +10,4 @@ dm*.txt
 dmesg*.txt
 fuzz_*.json
 fuzz_*.log
+emmcwp

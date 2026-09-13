@@ -1,5 +1,30 @@
 # State of the hunt — unlocking a Verizon HTC One (M8), software only
 
+## 2026-09-13 (afternoon, phone unplugged) — **CORRECTION: the flag is
+## probably writable from Android after all**
+
+The "hardware write-protect, nothing can clear it" conclusion below is
+wrong in its *mechanism*, and that matters. Re-reading
+`partition_write_prot_mmc` (`0x0f504a30`) end to end shows hboot arming the
+eMMC's own **write-protect groups** — CMD28 one group at a time, group size
+`512KB * HC_WP_GRP_SIZE * HC_ERASE_GRP_SIZE` — not SoC registers, and
+`CLEAR_WRITE_PROT` (CMD29) is the matching clear. Our card reports
+`HC_WP_GRP_SIZE=32, HC_ERASE_GRP_SIZE=1` (16 MiB groups) and
+`USER_WP=0x00`, i.e. the groups hboot armed are **Temporary** type, which
+CMD29 clears. `pg1fs_security` has no CRC and no signature (only bytes 0
+and 8 are non-zero), so flipping it is a 4-byte write to LBA 2148.
+
+The earlier "it can't be cleared" evidence came from probes that (a) never
+read the WP *type* (CMD31), (b) wrote the wrong EXT_CSD byte (166 instead of
+171) and (c) never decoded the R1 status word. See
+[EMMC_WP_BYPASS.md](EMMC_WP_BYPASS.md) for the full analysis, the new
+`tools/emmcwp.c` (MMC_IOC_CMD tool with CMD31/CMD30/CMD29/CMD28, R1
+decoding, and a safe scratch write test at `pg1fs+1MiB` in the same 16 MiB
+group as the flag) and `tools/soff_run.sh` (unattended run + bootloader
+verification). Public corroboration: CVE-2014-9961, "a vulnerability in
+eMMC write protection exists that can be used to bypass power-on write
+protection".
+
 ## 2026-09-13, 03:00–04:00 — **EDL entry is real and reproducible**
 
 **Short version:** the M8 *does* expose Qualcomm EDL (Sahara). It is not
