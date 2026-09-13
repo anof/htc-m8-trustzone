@@ -597,6 +597,23 @@ does downstream — in particular whether any of them reads its payload from
 a partition the AP *can* write (`reserve` p43, `cache` p48, `custdata`
 p22, `pdata` p29, `misc` p24 are all AP-writable).
 
+**Checked the payload source for the engineering modes:** the `mfg`
+partition (p5, 256 KB) is effectively empty — its first 4 KB contain only
+38 non-zero bytes (a 20-byte header `6036ee00 02000000 03000000 1c000000
+5e2354c8`), no `ANDROID!` boot header, no kernel or ramdisk. `sp1` (p12,
+5 MB) is filled with a repeating `9df7` filler pattern. So `EnterMfgkernel`
+has nothing to boot on this device and that route is dead too — as is any
+"boot an engineering kernel" idea that assumes one is stored locally.
+
+Remaining classes of route, in order of tractability:
+
+1. A memory-safety bug in code that runs **before** a signature check
+   (upload buffers, USB stack, the 0x100-byte signature-block handling).
+2. An SD-card based update (needs physical media the device does not have,
+   and the images are signature-checked anyway).
+3. Physical routes: HTC service keycard (JavaCard), or the TZ bug that the
+   earlier sessions already showed is hardened on this build.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
