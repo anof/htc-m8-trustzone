@@ -205,6 +205,30 @@ HTC keeps redundant copies. Reading the reader/writer pair around
 `0x0f50ca94` will give the real file layout and the offset of the command
 field.
 
+### Where the command field actually lives (the record is the *config block*)
+
+Re-read the dispatcher's own pointer setup at `0x0f50df72`:
+
+```
+ldr.w r5, =0x197238 ; add r5, pc    -> r5 = 0x0F6A51B8
+ldr   r5, [r5]                       -> r5 = *(0x0F6A51B8)  (the runtime config block)
+add.w r4, r5, #0x800                 -> command string lives at config+0x800
+```
+
+So the command is read from the **runtime config block**, not from the misc
+partition (my `misc+0x800` write was to the right *offset* of the wrong
+*object* — hboot never consults that copy). Consistent with that: none of
+the partitions on the device contain any of the command strings
+(`RebootATS`, `update-zip`, `update-hboot`, `SetRuuNbhUpdate`, …) — checked
+`board_info`, `pdata`, `misc`, `pg2fs` dumps directly. The only misc hit is
+`DeviceWarmBoot` at 0x20, which is hboot's own *output* marker.
+
+So the BCB command string is placed into the config block at runtime (by the
+boot flow / fastboot side), and the config block itself is built from the
+write-protected sources. **Conclusion: the "boot command → skip eMMC WP"
+mechanism is real, but it is not reachable by writing any partition the AP
+can touch.** It is the mechanism HTC's own RUU/factory flows use.
+
 ## Strongest remaining lead: the eMMC WP is armed per *boot mode*
 
 Every `partition_write_prot_mmc()` call site is guarded like this
