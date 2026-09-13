@@ -183,6 +183,20 @@ bootloader). The offline trace above should be done first.
 
 # Paths 3 and 4 — results
 
+> **Update (later session):** the S-ON/S-OFF flag itself has now been
+> located and decoded — it is the first dword of the `security` file in the
+> `pg1fs` partition (partition offset 0x8400), `>1` = S-ON, `<=1` = S-OFF,
+> and it is re-protected on every boot by hboot's `msm_mpu_emmc_protect()`.
+> See **[SOFF_FLAG.md](SOFF_FLAG.md)** for the full write-up, the measured
+> write-protection map, and the ATS bypass conditions.
+
+> **Note on the command table:** the handler addresses quoted below were
+> obtained from a table parse that is offset by four bytes for some entries,
+> so a few of them point one entry off (e.g. `0x0f515b65` is really the
+> *readcid* printer, not `writesecureflag`). Reliable handler addresses can
+> be recovered by resolving the message strings instead, e.g.
+> `tools/xrefs.py 0xf587982` -> `writesecureflag` handler at `0x0f515290`.
+
 ## Correction to an earlier reading
 
 `0xf539ff4` is **memset**, not memcpy (it is called with `r1 = 0` to clear

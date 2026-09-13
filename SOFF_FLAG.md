@@ -1,0 +1,233 @@
+# The S-OFF flag — located, decoded, and why the AP cannot write it
+
+Date: 2026-09-12 (evening session). Device: HTC One M8 Verizon
+`HT45FSF02406`, hboot 3.19.0.0000, S-ON, CID `VZW__001`, Android 5.0.1,
+firmware 4.17.605.17, temp root via KingRoot.
+
+This file records a set of results that finally close the loop on *where*
+S-ON/S-OFF is stored and what would have to be written to flip it. Every
+claim below is either read straight out of the hboot/kernel disassembly or
+measured on the device.
+
+---
+
+## 1. Where S-OFF actually lives
+
+**`pg1fs` partition (mmcblk0p2), file `security`, first dword.**
+
+The `pg1fs` filesystem is a simple slot format. Its first four 0x400-byte
+slots name the files, and the file payloads live further in:
+
+| slot | name (as stored) | size | payload offset |
+|------|------------------|------|----------------|
+| 1 | `security`  | 0x1000 | 0x8400 |
+| 2 | `simlock`   | 0x1800 | 0x9400 |
+| 3 | `simunlock` | 0x1000 | 0xac00 |
+| 4 | `sec_setting` | 0x400 | (empty) |
+
+hboot prepends `pg1fs_` when it looks a file up, which is why the strings
+`pg1fs_security` etc. exist in the image but not in the filesystem dump.
+
+On this device the `security` payload at partition offset **0x8400** reads:
+
+```
+03000000 00000000 01000000 00000000 ...
+```
+
+`oem readsecureflag` prints `secure_flag: 3`, i.e. the first dword *is* the
+secure flag, and 3 = S-ON.
+
+### Value semantics (from disassembly)
+
+`f50e7a8()` is the single predicate that decides S-ON vs S-OFF everywhere
+in hboot (including the " S-ON"/" S-OFF" string selection at `0x0f52f0ec`):
+
+```
+f50e7a8:
+    bl  f53b5f8          ; = (read_secure_flag() > 1) ? 1 : 0
+    cbnz r0, ret1
+    bl  f50d64c          ; config item #7
+    ubfx r0, r0, #5, #1  ; bit 5
+    bx  lr
+ret1: movs r0, #1
+```
+
+* `read_secure_flag()` (`f5318dc`) returns the **first dword of the
+  `pg1fs_security` file**, or -1 if the block was never loaded.
+* Therefore **flag > 1 ⇒ S-ON, flag ≤ 1 ⇒ S-OFF.**
+  (0 is the canonical S-OFF value; 3 is what a retail S-ON device carries.)
+* The second term is only consulted when the flag is already ≤ 1, i.e. it
+  is an extra "force" bit, not the main switch.
+
+### The write path in hboot
+
+`f531898(value)` is the only writer of that dword:
+
+```
+if (value > 3) return -1;
+buf = *(0x0F6A3A7C);          ; pg1fs_security buffer loaded at boot
+if (!buf) return -1;
+*(u32 *)buf = value;          ; <-- S-OFF flag
+f504ee4("pg1fs_security", 0, buf, 0x1000);   ; write file back
+```
+
+and it is reached only from the `oem writesecureflag` handler
+(`0x0f515290`):
+
+```
+value = atoi(argv[1]);
+if (f50e7a8()) {                     ; currently S-ON
+    if (value > 1) {
+        if (check_partition_signatures()) -> "partitions siganture failed"
+    }
+}
+if (f50e7a8()) {                     ; currently S-ON
+    if (f5030b8(0x7b))               -> abort
+    f566ed4(&b, &d, &d2, 1);         ; keycard / JavaCard query
+    if (fail || b != 0)              -> "Permission denied, value %d"
+}
+f531898(value);
+```
+
+Live confirmation on this device:
+
+```
+fastboot oem writesecureflag 0
+  (bootloader) [JAVACARD_ERR] SD/USBDISK Init error
+  (bootloader) writesecureflag: Permission denied, value 1
+fastboot oem checkKeycardID
+  (bootloader) Keycard ID: -1
+```
+
+The gate is a physical **HTC service keycard** (a JavaCard presented as an
+SD card or USB disk). With no keycard the whole command is refused, for
+every value.
+
+---
+
+## 2. Why the flag cannot simply be edited from Android
+
+Measured with a freestanding `pwrite`/`pread` tool (`blkio`) and, separately,
+with **raw eMMC CMD24 writes** issued through `MMC_IOC_CMD` (bypassing the
+block layer, the page cache and the filesystem entirely):
+
+```
+blkio w /dev/block/mmcblk0p2 0x8600 aa bb ...   -> pwrite rc=16, no error
+blkio r /dev/block/mmcblk0p2 0x8600 10          -> 00 00 ... (unchanged)
+mmcrw w /dev/block/mmcblk0 0x865 aa bb ...      -> "write accepted"
+mmcrw r /dev/block/mmcblk0 0x865 1              -> 00 00 ... (unchanged)
+```
+
+The same tools write `misc` (p24), `pdata` (p29), `cache` (p48), `radio`
+(p20) and others without any trouble, so the tools are correct — the
+drop is specific to certain LBA ranges.
+
+### Write-protection map (measured, at partition offset 0x1000)
+
+| partition | writable from AP |
+|---|---|
+| p1..p13 (sbl1, **pg1fs**, **board_info**, reserve_1, mfg, **pg2fs**, sbl1_update, rpm, tz, sdi, hboot, sp1, wifi) | **no** |
+| p14..p20, p22..p43 (ddr, dsps, adsp, wcnss, radio_config, fsg, radio, tool_diag?, custdata, reserve_2, **misc**, …) | yes (p21 tool_diag: no) |
+| p44 boot, p45 recovery, p46 reserve_3, p47 system | **no** |
+| p48 cache, p49 userdata | yes |
+
+(p21 = `tool_diag` is blocked even though its neighbours are not.)
+
+The protected partitions are exactly the ones hboot re-arms on every boot
+through `msm_mpu_emmc_protect()` (see below), which is why a raw write is
+accepted by the card interface and then silently discarded.
+
+---
+
+## 3. The mechanism: `msm_mpu_emmc_protect` and the ATS bypass
+
+hboot strings:
+
+```
+msm_mpu_emmc_protect: set write protection fail (from mfg to reserve_1)
+msm_mpu_emmc_protect: set write protection fail (from reserve_2 to modem)
+msm_mpu_emmc_protect: set write protection fail (from reserve_2 to recovery)
+msm_mpu_emmc_protect: set write protection fail (from reserve_2 to system)
+Disable eMMC write protection due to get ats debug flag
+```
+
+Each region call looks like:
+
+```
+0f56aa44  bl f52fdf8           ; security[0x400]  == "ATS debug flag"
+0f56aa48  cbz r0, do_protect
+0f56aa4a  bl f53031c           ; atsdebug[0xc]    == "diswpflag"
+0f56aa4e  cbz r0, do_protect
+0f56aa50  movs r0, #0
+0f56aa52  bl f530334           ; clear diswpflag and save its file
+0f56aa56  print "Disable eMMC write protection due to get ats debug flag"
+0f56aa5e  b skip
+do_protect:
+0f56aa7a  bl f504a30           ; partition_write_prot_mmc(start, end, 1)
+```
+
+So the protection is skipped for one boot when **both**
+
+* `security[0x400]` (in the **pg1fs** `security` file), and
+* `atsdebug_info[0xc]` (a 0x400-byte file `pg2fs_atsdebug_info` in **pg2fs**)
+
+are non-zero.
+
+Both files live in partitions the AP cannot write, and both are provisioned
+by HTC's signed ATS flow:
+
+* `oem ats <value>` only sets a **RAM** flag (`Set usb ats = %d`,
+  `f5034cc`), used by the USB/fastboot code paths; it does not persist.
+* The persistent flag is programmed from a signed blob (the "ISML" magic
+  path at `0x0f5304f2`, which calls the crypto dispatcher before storing
+  `security[0x400]`) or from `atsdeb.txt` ("Reading atsdeb.txt [%lu]Bytes").
+* `oem clear_atsdebug` / `read_atsdebug` only clear/read this state.
+
+Live test: after `fastboot oem ats 1` the bootloader prints
+`Set usb ats = 1` but `read_atsdebug` still reports
+`ATS debug flag 0, time 0 s, reboot 0 / disverflag = 0, diswpflag = 0`,
+and a raw write to pg1fs after booting Android with that flag set is still
+dropped. So the `ats` command alone does not disable the write protection.
+
+---
+
+## 4. `fastboot flash` is not the shortcut either
+
+On this LOCKED, S-ON device every flash target is *reachable* — the
+bootloader downloads the payload and then verifies it:
+
+```
+fastboot flash recovery recovery-twrp-3.7.0_9-0-m8.img
+  Sending 'recovery' (16788 KB)   OKAY
+  Writing 'recovery'  (bootloader) signature checking...
+  FAILED (remote: 'signature verify fail')
+
+fastboot flash misc misc.img
+  Sending 'misc' (1024 KB)        OKAY
+  Writing 'misc'    (bootloader) signature checking...
+  FAILED (remote: 'signature verify fail')
+```
+
+The verification is `check_boot_image_signature()` (`0x0f51423a`) which
+calls the crypto dispatcher at `0xf5413b0`, plus the TZ range guard
+("Access denied. %X~%X is protected by TZ."). There is no per-partition
+exemption: even `misc` is signature-checked.
+
+---
+
+## 5. What is left
+
+1. **A bug in hboot's flash-image verification or header parser.**
+   The flash path is reachable while locked, downloads attacker-controlled
+   data and parses it ("MAGIC word", "shift signature_size for header
+   checking", "Boot/Recovery signature checking..."). This is the only
+   remaining *reachable attacker-controlled parser* that was found.
+2. **A bug in the ATS provisioning path** (`atsdeb.txt` / the USB ATS
+   service blob). It is signed, and the transport is HTC's own protocol,
+   but it is parsed by the bootloader.
+3. **A TrustZone bug** — the earlier sessions measured that HTC's TZ rejects
+   every secure target address for the published MSM8974 SCM primitives, so
+   this needs a different TZ bug.
+
+The keycard/JavaCard gate and the eMMC/MPU write protection are not
+software-defeatable with what is reachable today.
