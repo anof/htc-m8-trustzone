@@ -52,6 +52,7 @@ fver_get_version(0, TZ, 4)      -> ffffffee   (refused)
 |---|---|
 | `FINDINGS.md` | Full write-up: method, measurements, dead ends |
 | `HANDLER_ANALYSIS.md` | Audit of all analyzable SCM handlers for unchecked length fields |
+| `TRUSTLET_ANALYSIS.md` | Widevine trustlet recon: command table, memcpy, and where the audit stopped |
 | `htc_symbols.py` | Derived TrustZone address map for this device |
 | `kmod/tzmod.c` | Loadable module: SCM client + probes |
 | `kmod/tzmeta.c` | Module ELF metadata (`__versions`, `__modinfo`, `__this_module`) |
