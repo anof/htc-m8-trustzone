@@ -614,6 +614,30 @@ Remaining classes of route, in order of tractability:
 3. Physical routes: HTC service keycard (JavaCard), or the TZ bug that the
    earlier sessions already showed is hardened on this build.
 
+### ATS enable path: input comes from an SD card
+
+The only software path that can clear the eMMC write protection is the ATS
+state machine, and its input file `atsdeb.txt` is opened through the SD/FAT
+file API (`0x0f511ea2` -> `f51f9a8` -> SD presence check + `f57b808`).
+No SD card is present on this device, and the record itself is signed
+(the `ISML`/`MLML` blob). So that route needs physical media *and* an HTC
+ATS blob.
+
+Also clarified: `FAIL12 signature verify fail` is just the error-string
+lookup for verification code 8 (`0x0f51bf80` is a switch on the code that
+selects the message). The verification itself lives elsewhere.
+
+### Bottom line reached by elimination
+
+Any code that runs *after* hboot (TWRP, stock recovery, a custom kernel)
+cannot help, because the eMMC write protection for boot/recovery/system is
+armed by hboot on every boot and is enforced below the OS. Only TZ or hboot
+itself can write those ranges, and every hboot write path is gated
+(keycard, signed ATS blob, or HTC signature). Therefore the objective can
+only be met by (a) an hboot memory-safety bug found in the pre-verification
+parsers, or (b) external material — a physical SD card with a valid ATS
+blob, or the HTC JavaCard.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
