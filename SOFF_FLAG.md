@@ -511,6 +511,29 @@ pointer arrays for `0x0f507b21` / `0x0f508797` — Thumb bit set) and see
 whether the RUU per-image flush goes through it. If it does not, the crafted
 ZIP route is a live unauthenticated flashing primitive.
 
+### Follow-up: those wrappers are dead code, and the RUU check is an ID compare
+
+* No code in the image materialises `0x0f507b20` / `0x0f508796` (checked
+  literal pointers, `ldr+add pc`, `bl`, `blx`, and plain branches) — they are
+  unreferenced in this build. Effective (live) crypto verification call
+  sites in the whole image are only:
+  `0x0f506d90`, `0x0f51e062`, `0x0f51e610` (fastboot flash of
+  boot/recovery/system via `f528648`), `0x0f514276` (TZ SMC verify used by
+  the boot-time boot/recovery check), `0x0f51de06` (unlock token RSA), and
+  `0x0f566b96`/`0x0f566bc4`.
+* The RUU apply path's "pre-update check" for `image[hboot]`
+  (`0x0f50b5ca` -> `f508038` -> `f507c64`) is a **dword-list ID compare**
+  (walk a zero-terminated list, compare against expected IDs, print
+  `INFO...... Successful/Failed`), not a signature check.
+
+So the working hypothesis is now strong: **the RUU/ZIP update path contains
+no cryptographic image verification — it relies on metadata (model ID, CID,
+version) and on ID lists inside the images, both of which are attacker
+controlled in a hand-built package.** The next step is therefore empirical:
+build a minimal HTC-style ZIP and run it through RUU mode
+(`fastboot oem rebootRUU` -> `fastboot flash zip <file>`) with a
+non-critical target only, and watch how far it gets.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
