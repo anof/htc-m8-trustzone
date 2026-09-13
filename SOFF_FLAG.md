@@ -331,6 +331,26 @@ Steps to verify next, in order:
    restore path (rebuild with the original components).
 3. Only then: rebuild recovery with TWRP's kernel + ramdisk and boot it.
 
+### Measured result of step 2 (negative)
+
+```
+fastboot flash rzimage stock_zimage.bin      # stock zImage extracted from recovery.img @0x900
+  Warning: skip copying rzimage image avb footer (rzimage partition size: 0, ...)
+  Sending 'rzimage' (6365 KB)   OKAY
+  Writing 'rzimage'  (bootloader) signature checking...
+  FAILED (remote: 'signature verify fail')
+```
+
+So plain `fastboot flash zimage|rzimage|ramdisk` does **not** reach the
+`fb_flash_zimage` rebuild path on a LOCKED device — it is first handled by
+the generic flash flow, which signature-checks the payload. The rebuild
+dispatcher (`0x0f51c858`) is reached from a different branch
+(`0x0f51e67a`) that is itself gated by `f5030b8(3)` and by
+`0xf528648`/`0xf507ae0` checks.
+
+Recovery partition verified intact afterwards (byte-match against the stock
+dump at LBA 0x108000), so this test was non-destructive.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
