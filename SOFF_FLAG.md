@@ -462,6 +462,31 @@ Test vehicle: `fastboot oem rebootRUU` (RUU mode) then
 `fastboot flash zip <crafted.zip>`, or the `misc` BCB command
 `update-zip` if the SD/download source can be pointed at our data.
 
+### Exact pointers for resuming this trace
+
+| address | role |
+|---|---|
+| `0x0f50b278` | RUU/ZIP **apply**: model-ID, CID, main/hboot version checks, then per-partition flush |
+| `0x0f509f8c` | **"ZIP Info Parsing..."**: walks the ZIP, unzips and parses the metadata entry (`f509588`, `f509bfc`) |
+| `0x0f525fe2` | ZIP **container parse** wrapper (no crypto) |
+| `0x0f527cd8` | unzip-style EOCD + central-directory parser (magics `0x06054b50`, `0x02014b50`) |
+| `0x0f5264c0` | per-entry unzip helper used by the apply path |
+| `0x0f508038`, `0x0f507d4c` | "flush"/write helpers called after `image[hboot] unzipping for pre-update check` |
+| `0x0f509f10` | find entry by name in the ZIP (used to locate `hboot`) |
+| `0x0f509f8c`-region strings | `INFOstart image[hboot] unzipping for pre-update check...`, `INFOimage[hboot] Platform check fail!`, `INFOstart image[hboot] flushing...`, `Update is in progress...`, `Do not power off the device!` |
+
+The remaining question is narrow and testable: **do `0x0f5264c0` /
+`0x0f508038` / `0x0f507d4c` verify a signature for each entry, or does the
+path rely only on the metadata checks and the in-image "platform check"?**
+If it is the latter, a crafted ZIP with correct MID/CID/version metadata is
+a direct flashing primitive on a LOCKED device — the first such primitive
+found in this whole investigation.
+
+Test discipline for that experiment: use a non-critical target first
+(`userdata`, `cache`, or `recovery`), watch the bootloader log output for
+the `Checking ...` lines, and never put `hboot`, `sbl1/sbl2/sbl3`, `tz` or
+`rpm` in a test package.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
