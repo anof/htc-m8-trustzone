@@ -557,6 +557,48 @@ of it.
 
 ---
 
+## 11. `fastboot erase` — new primitive, but it honours the protection list
+
+Measured while LOCKED and S-ON:
+
+```
+fastboot erase cache        -> Erasing 'cache' OKAY            (unprotected partition)
+fastboot erase tool_diag    -> FAILED (remote: 'not allowed')  (TZ/MPU-protected)
+fastboot erase reserve_3    -> FAILED (remote: 'not allowed')  (TZ/MPU-protected)
+```
+
+So erase needs no signature (unlike flash) but hboot itself refuses the
+protected partitions (`Access denied. %X~%X is protected by TZ.` is in that
+code path). That closes the "erase pg1fs to drop the secure flag" idea —
+pg1fs cannot be erased from fastboot either.
+
+Side observation: `misc` is actively written by hboot — the current dump
+differs from the earlier one only at offset 0x138 with the ASCII
+`HPST_NV_SUCCESS` left behind by the user's earlier `oem refurbish` run.
+That confirms misc is hboot-writable working state, and it is also
+AP-writable (root), i.e. the one shared communication channel.
+
+## 12. Where the boot-command codes go
+
+The `misc` BCB dispatcher stores the command code at `config+0x1597C`
+(`0x0f50e3c0`) and the only consumer is `0x0f50e7f8`-`0x0f50e824`, which
+maps codes to boot modes:
+
+```
+code values seen: 3, 0x12..0x1b, 0x29..0x2b, 0x2d, 0x31 ...
+0x0f50e810: if (code == 0x17) return 0            ; special-cased
+else return code
+```
+
+`EnterMfgkernel` (mfg kernel boot), `Enter9kRD*` (9000-series diag modes),
+`EnterSDupdate`, `update-hboot`, `update-zip`, `boot-repartition` and
+`RebootATS` are the interesting codes. The next audit is what each code
+does downstream — in particular whether any of them reads its payload from
+a partition the AP *can* write (`reserve` p43, `cache` p48, `custdata`
+p22, `pdata` p29, `misc` p24 are all AP-writable).
+
+---
+
 ## 6. New reachable surface: the `misc` BCB command dispatcher
 
 `misc` (mmcblk0p24) **is writable from Android with root** (measured), and
