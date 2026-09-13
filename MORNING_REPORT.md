@@ -134,6 +134,24 @@ cannot be reached from the Mac and needs one physical press:
 Nothing was written to flash: the S-ON flag was re-read after the last write
 attempt and still reads `03000000`.
 
+## Ideas queued for the next session (phone back on Android)
+
+1. **`fastboot oem MRW` / `oem MRR`** — hboot's `security_command` group
+   exposes `MRW <mr_addr> <mr_data>` and `MRR <mr_addr>` (usage strings at
+   `0x0F587F4B` / `0x0F587F89`, handlers not yet located because hboot
+   references its strings without plain pointers). If these are a real
+   register/memory write primitive, patching hboot's own RAM image (it runs
+   from `0x0F500000`) to skip the JavaCard gate in `writesecureflag` becomes a
+   direct path. First step is a harmless read (`oem MRR 5`) to see what the
+   command answers.
+2. **Restart-reason / boot-mode sweep** (`edl_tools/resume_soff.sh`): walk the
+   OEM reason codes, log `androidboot.mode=`, and attempt the flag write in
+   each boot.
+3. **`oem resetgift`** and the `gift_mode` / `repartition` boot modes — both
+   are candidates for a boot path that does not arm the eMMC write-protect.
+4. Wi-Fi was checked as a way around the missing USB while parked: no host on
+   the LAN answers on TCP 5555, so there is no adb-over-network to use.
+
 ## Tooling left behind
 
 `edl_tools/` — `ensure_root.py` (unattended KingRoot via UI dumps, taps
