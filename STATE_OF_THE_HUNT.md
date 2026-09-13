@@ -177,6 +177,34 @@ command choice should be the most inert one — the mapper shows the boot
 command's only consumers are the WP gate and boot-vs-recovery selection, but
 the individual handler bodies have not all been read yet.
 
+### Tested live: the misc+0x800 write does nothing (offset inference was wrong)
+
+```
+# from Android (root), before reboot:
+blkio w /dev/block/mmcblk0p24 0x800 5265626f6f7441545300...   ; "RebootATS"
+blkio r /dev/block/mmcblk0p24 0x800 10  -> 5265626f6f74415453 00000000000000
+# reboot:  Android boots normally (no hang), but...
+blkio w /dev/block/mmcblk0p2 0x8600 aabb...   -> pwrite ok, read back 00...
+blkio w /dev/block/mmcblk0p2 0x8400 <S-OFF>   -> (not attempted; WP still enforced)
+# after the reboot:
+blkio r /dev/block/mmcblk0p24 0x800 10 -> 5265626f6f74415453 00000000000000
+```
+
+So: (a) the device booted Android with the command present — the *command
+string* itself is harmless; (b) the eMMC write protection was **still
+enforced**; and (c) **hboot did not clear the field**, which strongly
+suggests the BCB command hboot consumes is *not* at `misc+0x800` — the
+record the dispatcher reads (structure at `0x0F64D548`) must be loaded from
+somewhere else, or at a different offset.
+
+Next step (precise): find the loader for that structure. hboot references
+three misc partition names — `misc`, `misc2`, `misc3` (`0x0f595d18`,
+`0x0f583c36`, `0x0f583c30`; xrefs at `0x0f50ca96`/`0x0f50cab4`/`0x0f50d20c`
+and reads at `0x0f505352`, `0x0f506710`, `0x0f51cd40`, `0x0f51cfd8`) — so
+HTC keeps redundant copies. Reading the reader/writer pair around
+`0x0f50ca94` will give the real file layout and the offset of the command
+field.
+
 ## Strongest remaining lead: the eMMC WP is armed per *boot mode*
 
 Every `partition_write_prot_mmc()` call site is guarded like this
