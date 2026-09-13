@@ -1,5 +1,72 @@
 # State of the hunt — unlocking a Verizon HTC One (M8), software only
 
+## 2026-09-13, 03:00–04:00 — **EDL entry is real and reproducible**
+
+**Short version:** the M8 *does* expose Qualcomm EDL (Sahara). It is not
+reachable by any key combo; it is entered by writing Qualcomm's
+emergency-download magic triple into IMEM and resetting. We did that from a
+kernel module, watched the device come up as `QHSUSB__BULK 05c6:9008`, and
+completed Sahara handshakes and image uploads with it.
+
+### How EDL was entered
+
+Kernel source (`arch/arm/mach-msm/restart.c`) shows the `reboot edl` path
+writes three magics to IMEM before resetting:
+
+```
+EMERGENCY_DLOAD_MODE_ADDR 0xFE0   ->  0xFE805FE0
+MAGIC1 0x322A4F99, MAGIC2 0xC67E4350, MAGIC3 0x77777777
+```
+
+That path is compiled out of this HTC kernel (`CONFIG_MSM_DLOAD_MODE` off —
+the string "dload mode is not enabled on target" is present), so
+`adb reboot edl` does nothing. We wrote the magics ourselves from a loadable
+module (`kmod/dload/dloadmod.c`, build recipe `kmod/dload/build.sh`) using the
+`__arm_ioremap` symbol fingerprint taken from a stock module's `__versions`.
+
+With the magics set, the next warm reboot comes up as **05c6:9008
+(QHSUSB__BULK)** for ≈18 s, then the watchdog resets the phone and it boots
+Android normally. The trigger is one-shot.
+
+### What the EDL session answers
+
+```
+HELLO v2 min 1 max_pkt 0x400 mode 0
+HWID:    0x007b80e100000000   (MSM_ID 0x007b80e1 = MSM8974Pro, OEM 0, MODEL 0)
+PK_HASH: ba2102da99c924058c758fa9f4250847c92cabde17fdcef01d4daff8df5d6753
+Serial:  0x09761bfe
+```
+
+The boot ROM also serves `EXECUTE` commands (serial, HWID, PK hash) and
+accepts an image for Sahara image-ID **13**, requesting exactly the bytes the
+MBN header declares (verified: 65,668/65,668 bytes, zero padding).
+
+### The wall: signature enforcement
+
+Ten different public Firehose programmers (ZTE/OPPO/Xiaomi/Qualcomm reference,
+MSM8974/8974AB/8974Pro/AC) all upload successfully — the boot ROM answers
+`END_TRANSFER status=0` and `DONE_RSP` — and then **nothing happens**: the USB
+device stays enumerated but never services another endpoint transaction, and
+the 18 s watchdog resets the phone. Identical behaviour for a modified image
+whose entry code was replaced with a marker writer (no marker appeared) and
+for a payload that pets the watchdog / stops the USB controller.
+
+Positive control: uploading the phone's **own HTC-signed SBL1** as the image
+makes the device drop off the bus 0.28 s after the upload and boot the normal
+chain — i.e. the boot ROM authenticates images and only executes those signed
+with the device's key (PK hash above, HTC's).
+
+So EDL is confirmed, but it only runs **HTC-signed** images, and no HTC-signed
+Firehose programmer for this platform is public. Remaining ideas in this
+direction: (a) locate an HTC-signed programmer (service firmware/RUU leaks),
+(b) abuse the pre-auth MBN parsing in the boot ROM (load address is taken from
+the header), (c) run the SBL1 in EDL and use *its* download mode.
+
+Tools built for this: `edl_prep/` (candidate programmers), `s1_firehose.py`
+(one-window Sahara upload + Firehose handover), `try_loader.sh` /
+`night_loop.sh` (unattended cycles), `ensure_root.py` (UI-dump driven KingRoot
+automation), `kmod/dload` (magics), `kmod/dloadrd` (read back IMEM markers).
+
 Device: `HT45FSF02406`, HTC6525LVW (`m8_wlv`), MID `0P6B20000`,
 CID `VZW__001`, hboot 3.19.0.0000, firmware 4.17.605.17, Android 5.0.1,
 MSM8974, S-ON, bootloader LOCKED. Root available only via KingRoot
