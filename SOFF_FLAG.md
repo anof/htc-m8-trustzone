@@ -487,6 +487,30 @@ Test discipline for that experiment: use a non-critical target first
 the `Checking ...` lines, and never put `hboot`, `sbl1/sbl2/sbl3`, `tz` or
 `rpm` in a test package.
 
+### Where the verifiers are (and are not) called
+
+Call-graph sweep of the whole image for the crypto entry points:
+
+| verifier | direct call sites |
+|---|---|
+| `0x0f528648` (image verify: 0x100-byte sig block + body) | `0x0f506d90`, `0x0f507b44`, `0x0f51e062`, `0x0f51e610` |
+| `0x0f528682` (RSA verify, e=65537) | `0x0f508796`, `0x0f51de06` (unlock token), `0x0f566b96`, `0x0f566bc4` |
+| `0x0f507b20` (wraps `f528648`) | **none** — reached only indirectly |
+| `0x0f508796` (wraps `f528670`/`f528682`) | **none** — reached only indirectly |
+
+The apply path's *write* primitive (`f507be0`, 8 call sites incl.
+`0x0f50b704` inside the RUU apply) does **no** verification itself, and the
+apply path's own calls (`f508038`, `f507d4c`) are unverified DDR/partition
+writes with progress prints. The two verifiers that exist in the
+`0x0f507xxx`-`0x0f508xxx` range have no direct callers, i.e. hboot reaches
+them through a function-pointer/table dispatch that has not been located
+yet.
+
+Next concrete step: find that indirect dispatch (search the `.data`/`.bss`
+pointer arrays for `0x0f507b21` / `0x0f508797` — Thumb bit set) and see
+whether the RUU per-image flush goes through it. If it does not, the crafted
+ZIP route is a live unauthenticated flashing primitive.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
