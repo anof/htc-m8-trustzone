@@ -171,9 +171,19 @@ bootloader (`fastboot oem readsecureflag` → `secure_flag: 0`, and the
 S-OFF is the whole gate. With `security <= 1` hboot stops treating the
 boot/recovery/system signatures as authoritative, so:
 
-1. `fastboot flash recovery twrp-…-m8.img` (unsigned is now accepted),
-2. boot TWRP, `adb sideload`/install **LineageOS** for `m8` (AOSP boot
-   image, its own kernel), then GApps/whatever,
+1. `fastboot flash recovery recovery-twrp-3.7.0_9-0-m8.img` (unsigned is now
+   accepted; the image is already on the Mac),
+2. boot TWRP and install **LineageOS for `m8`** — the newest build that still
+   exists is on archive.org, already fetched and hash-verified here:
+
+   ```
+   lineage/lineage-19.1-20220825-UNOFFICIAL-m8.zip   583049840 bytes
+   sha1 3544ec5fdd0208526e193726a2a221ba54dcbf0a      (Android 12)
+   ```
+
+   Its `updater-script` asserts `ro.product.device` ∈ {htc_m8, m8wl, m8wlv,
+   m8vzw, …} — the Verizon variant is covered — writes `boot.img` itself and
+   needs nothing else (no SD card: `adb sideload` works from TWRP),
 3. optional cleanup with S-OFF: `fastboot oem writecid 11111111` (superCID),
    `fastboot oem lock`/unlock as desired, restore the WP state.
 
