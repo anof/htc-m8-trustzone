@@ -102,6 +102,38 @@ Alternative path if an HTC-signed image can be obtained (service tools, RUU
 leaks, HTC factory firmware): any HTC-signed Firehose programmer for an
 8974-family HTC device would immediately give raw flash access.
 
+## Additional analysis done while the phone was parked
+
+* The "boot mode" that hboot compares against 3 / 0xe comes from a field at
+  `*(global)+0x15800+0x17C` (getter `f50e7f8`), i.e. it is handed to hboot by
+  the SBL in a shared RAM structure rather than read from a partition by
+  hboot itself.
+* The restart reason (IMEM `0xFE80565C`, defined in
+  `mach/htc_restart_handler.h`) **is** read by hboot (`f5346f0` caches it and
+  clears the slot). Its values are the HTC restart reasons listed above, which
+  makes `androidboot.mode=...` selection and the OEM codes the natural way to
+  ask hboot for a different mode.
+* hboot's mode list (strings at `0x0F5A0D28` in `hboot.img`) has 18 entries;
+  they are referenced without a plain pointer table, so the exact
+  name→number mapping still needs to be read out on-device by *observing*
+  `androidboot.mode=` after each triggered boot (that is what
+  `edl_tools/resume_soff.sh` automates).
+* `hboot.img` on the partition is not an MBN (starts `05000000 03000000 ...`,
+  load address `0x0F500000` at offset 0x0C), so it cannot simply be served to
+  the boot ROM as a Sahara image the way SBL1 can.
+
+## Phone state (important for the morning)
+
+The phone is sitting in HTC's recovery (booted there with `adb reboot
+recovery`) — recovery leaves USB down until a menu entry is picked, so it
+cannot be reached from the Mac and needs one physical press:
+
+* Power + Volume Up → recovery menu → "reboot system now", **or**
+* hold Power ~15 s (screen off) → power on.
+
+Nothing was written to flash: the S-ON flag was re-read after the last write
+attempt and still reads `03000000`.
+
 ## Tooling left behind
 
 `edl_tools/` — `ensure_root.py` (unattended KingRoot via UI dumps, taps
