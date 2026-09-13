@@ -114,6 +114,69 @@ calls the stock recovery image the "minikernel"). `EnterMinikernel` = boot
 into recovery; there is no privileged factory environment behind it. Lead
 closed.
 
+## ★ The boot command is writable input and it gates the eMMC WP ★
+
+Corrected reading of `f50e7f8` (it returns the **boot command**, not a
+config item):
+
+```
+f50e7f8:
+   x = f50e7da()                    ; config_get(6) if (S-OFF || perm(0xa4)==0) else 0
+   if (!(x & 0x1000))  return config[0x1597C]      ; the boot command
+   if (config[0x1597C] == 0x17) return 0
+   return config[0x1597C]
+```
+
+and every `partition_write_prot_mmc()` call is guarded by
+`f50e7f8() ∈ {3, 0xe}` → **the eMMC write protection is armed only when the
+boot command is 3 or 0xe; for every other command it is skipped.**
+
+The boot command (`config+0x1597C`) is written by the `misc` BCB dispatcher
+from the command string that **the AP can write** (`misc` offset 0x800
+mirrors the dispatcher's record, whose base is the structure at
+`0x0F64D548`; misc offset 0x20 holds the warm/cold marker, confirming the
+mapping). Full command → code map extracted from the dispatcher:
+
+| command | code | boot target (mapper) |
+|---|---|---|
+| `Reboot` | 1 | boot |
+| `EnterFastboot` | 2 | boot |
+| `update-hboot` | 5 | boot |
+| `update-zip` | 6 | boot |
+| `update-combo` | 7 | boot |
+| `update-zip-repartition` | 8 | boot |
+| `EnterBootloader` | 9 | boot |
+| `EnterSDupdate` | 0xd | boot |
+| `EnterRPowertest` | 0x10 | boot |
+| `boot-repartition` | 0x18 | **recovery** |
+| `EnterSimlock` | 0x1c | boot |
+| `Enter9kRD/2SD/2INTSD/ARB` | 0x29–0x2d | **recovery** |
+| `RebootATS` | 0x2e | boot |
+| `EnterMinikernel` | 0x31 | **recovery** |
+| `EnterHTMix` | 0x36 | boot |
+| `ImageUpdateFail` | 0x39 | boot |
+| `EnterInstallCW` | 3 | **arms the WP** |
+| (default/fallback) | 0xe | **arms the WP** |
+
+`config[6]` measured live as `0x5A5A5A5A` and `config[7]` as `0x5A5B5A5A`
+(bit 16, set by the boot code at `0x0f53bdba`); `readconfig 0..12` all
+readable via fastboot.
+
+### Consequence / next experiment
+
+Writing e.g. `ImageUpdateFail` (code 0x39, boots Android, no forced flow) or
+`EnterHTMix` (0x36) into `misc+0x800` from Android (root) and rebooting
+should bring Android up **without** the eMMC write protection armed — after
+which root can write `pg1fs` (offset 0x8400, first dword = the S-OFF flag),
+i.e. flip the device to S-OFF. All of the pieces for this test already
+exist on the machine (`blkio` pwrite/pread, KingRoot re-root automation).
+
+Risk note: if the chosen command triggers a flow that waits for a host tool,
+the phone would hang until it can be power-cycled (user is away), so the
+command choice should be the most inert one — the mapper shows the boot
+command's only consumers are the WP gate and boot-vs-recovery selection, but
+the individual handler bodies have not all been read yet.
+
 ## Strongest remaining lead: the eMMC WP is armed per *boot mode*
 
 Every `partition_write_prot_mmc()` call site is guarded like this
