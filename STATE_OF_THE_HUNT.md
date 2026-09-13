@@ -97,6 +97,23 @@ someone can power-cycle it, and the user is away — so this one stays
 un-tested until they are back (or until the mode's code path is read end to
 end, which is the next static task).
 
+### Resolved: `EnterMinikernel` is just "boot recovery"
+
+Followed the mapper's consumers (`0x0f514122`, `0x0f53b97c`). The function at
+`0x0f53b970` takes the mapper's result and uses it **as a partition name**
+for a `0x260`-byte image-header read (`f50410c` lookup, `f50456c` read), and
+the mapper returns:
+
+```
+codes {3, 0x12..0x1b, 0x29..0x2b, 0x2d, 0x31} -> "recovery"
+everything else                                -> "boot"
+```
+
+So the whole boot-command table is just a *boot-vs-recovery selector* (HTC
+calls the stock recovery image the "minikernel"). `EnterMinikernel` = boot
+into recovery; there is no privileged factory environment behind it. Lead
+closed.
+
 ## Tools in this repo that made it possible
 
 `tools/xref2.py` (drift-free PC-relative string xrefs, 2730 refs),
