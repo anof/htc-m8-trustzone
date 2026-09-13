@@ -229,6 +229,34 @@ write-protected sources. **Conclusion: the "boot command → skip eMMC WP"
 mechanism is real, but it is not reachable by writing any partition the AP
 can touch.** It is the mechanism HTC's own RUU/factory flows use.
 
+### Recovery-path check, and the one experiment that has been deliberately deferred
+
+```
+fastboot erase misc   -> FAILED (remote: 'not allowed')
+```
+
+So `misc` cannot be erased from fastboot either (hboot's erase allow-list is
+narrower than the AP's write permissions — the AP *can* write misc with
+root). Practical consequence: if a write to `misc` ever stops Android from
+booting, there is **no** bootloader-side way to undo it; the only fix would
+be root, which needs Android to boot.
+
+One candidate remains untested because of exactly that: the HTC BCB may
+store the command in the *first* field of the misc record (where the CID
+string sits: `misc+0` holds `VZW__001`, and the dispatcher compares the
+record's first bytes against `RebootATS` etc.). Writing a command there
+would either (a) be consumed and give the WP-skip, or (b) be ignored, or
+(c) interact with the CID/BCD logic and leave the phone booting straight
+into recovery or not booting at all — with no way to restore `misc` without
+root. **Deferred until the user is back and can power-cycle the device if
+needed.** Before running it, the safe order is:
+
+1. dump misc (backup exists: `misc_now.img`),
+2. write the command at `misc+0`,
+3. `adb reboot bootloader`, check `fastboot oem readcid` — if the CID is
+   unchanged, the field is not the CID source and the write is safe to take
+   further; if it changed, restore from the backup immediately.
+
 ## Strongest remaining lead: the eMMC WP is armed per *boot mode*
 
 Every `partition_write_prot_mmc()` call site is guarded like this
