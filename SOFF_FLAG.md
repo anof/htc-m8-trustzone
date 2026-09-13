@@ -534,6 +534,27 @@ build a minimal HTC-style ZIP and run it through RUU mode
 (`fastboot oem rebootRUU` -> `fastboot flash zip <file>`) with a
 non-critical target only, and watch how far it gets.
 
+### Measured: the RUU ZIP path is signature-gated at the door (hypothesis killed)
+
+Built a clean probe package (`ruu_probe/android-info.txt` with the device's
+own `modelid: 0P6B20000`, `cidnum: VZW__001`, `mainver: 6.21.605.3`,
+`hbootpreupdate: 11`), rebooted into RUU mode and uploaded it:
+
+```
+fastboot oem rebootRUU          -> OKAY
+fastboot flash zip probe.zip
+  Sending 'zip' (0 KB)   OKAY
+  Writing 'zip'   (bootloader) signature checking...
+  FAILED (remote: '12 signature verify fail')
+```
+
+So the ZIP container **is** cryptographically checked before anything is
+parsed or applied (the `12` is the same `FAIL12 signature verify fail`
+string at `0x0f5959fd`), and the metadata checks in `f50b278` are only
+reached afterwards, for an already-trusted package. The "no crypto in the
+apply path" observation was correct but irrelevant: the gate sits in front
+of it.
+
 ---
 
 ## 6. New reachable surface: the `misc` BCB command dispatcher
