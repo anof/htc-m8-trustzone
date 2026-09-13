@@ -284,6 +284,55 @@ takes attacker-supplied data and (per its name) drops the certificate step.
 
 ---
 
+## 9. The most promising route found so far: rebuild boot/recovery in place
+
+`fb_flash_zimage` (`0x0f51ba40`) is **not** a plain flash. Traced end to end:
+
+```
+read 0x260-byte boot header from the partition named by the caller
+  ("boot" for target `zimage`, "recovery" for target `rzimage`)
+if (strncmp(header+0, MAGIC, 8) != 0) {
+        print("Cannot find MAGIC word! Skip signature and try again...")
+        re-read from offset 0x100            ; raw zImage layout
+}
+read old zImage / ramdisk / dt from the partition
+allocate a fresh image buffer
+memcpy header; memcpy supplied zImage; memcpy ramdisk; memcpy dt
+partition_write(buffer)                       ; <- writes it back
+print("Reproduce [%s] image with new zimage / ramdisk / dt ...")
+```
+
+There is **no signature verification of the supplied components anywhere in
+this function** — the whole point is that HTC's OTA path rebuilds an
+existing signed image around new components. The fastboot side that reaches
+it is the flash-target dispatcher at `0x0f51c9c8`:
+
+| fastboot target | partition it rebuilds |
+|---|---|
+| `zimage`  | `boot` |
+| `rzimage` | `recovery` |
+| `ramdisk` / `rramdisk` | boot / recovery ramdisk |
+
+### Why this is the plan
+
+Recovery is the safe place to try it: if the rebuilt image is rejected at
+boot, Android still boots normally (the boot partition is untouched) and the
+image can be rebuilt again the same way. The end state that matters is
+TWRP running on a LOCKED, S-ON device — and once TWRP is up, LineageOS is
+installable (TWRP carries its own kernel, so the stock kernel's /system
+write protection no longer applies).
+
+Steps to verify next, in order:
+
+1. Extract the stock zImage/ramdisk from `recovery.img` (boot image header
+   at 0x100, page-aligned sections).
+2. `fastboot flash rzimage <stock zImage>` — if this succeeds with no
+   `signature verify fail`, the primitive is real and is also its own
+   restore path (rebuild with the original components).
+3. Only then: rebuild recovery with TWRP's kernel + ramdisk and boot it.
+
+---
+
 ## 6. New reachable surface: the `misc` BCB command dispatcher
 
 `misc` (mmcblk0p24) **is writable from Android with root** (measured), and
