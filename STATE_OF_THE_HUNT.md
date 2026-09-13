@@ -77,6 +77,26 @@ by one of: the JavaCard, a signed ATS blob, or HTC's signature.
   state (it reads board_info/pg1fs/pg2fs/misc + images; only misc is
   writable, and its data only feeds the audited BCB dispatch).
 
+## Last unexplored reachable behaviour: `EnterMinikernel`
+
+The `misc` BCB dispatcher (`0x0f50e28a`) maps the command
+`EnterMinikernel` to boot-command code **0x31** (and copies the command
+string into hboot's working record, `0x0f50e29e`). The code mapper at
+`0x0f50e830` returns one of two strings for codes
+`{3, 0x12..0x1b, 0x29..0x2b, 0x2d, 0x31}` — and the string
+`"minikernel\n"` exists in the image (`0x0f5840d8`) with **no other
+references**, i.e. it is reached via that table.
+
+The Android kernel in this build contains no `minikernel` parameter
+(checked `vmlinux.bin`), so this is an hboot-internal factory mode rather
+than a kernel cmdline switch. What it does is not yet known.
+
+**Not tested on purpose:** factory/diagnostic modes frequently wait for a
+host tool on USB. A mode that blocks would leave the phone hung until
+someone can power-cycle it, and the user is away — so this one stays
+un-tested until they are back (or until the mode's code path is read end to
+end, which is the next static task).
+
 ## Tools in this repo that made it possible
 
 `tools/xref2.py` (drift-free PC-relative string xrefs, 2730 refs),
