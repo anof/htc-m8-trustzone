@@ -35,6 +35,9 @@ Key facts learned about the device's QSEECom stack:
 | widevine | 0x61001–0x61026 (+0x20003 in the table) | matches the static table at merged offset 0x27f14; all answer with status word 0 |
 | keymaster | 1 (generate keypair), 2 (import), 3 (sign), 4 (verify) | the CVE-2016-5349 PoC still works end-to-end |
 | dxhdcp2 | **0, 1, 2, 3** | anything else returns status `0x0d0000xx`; command 2 answers `0x02000009` |
+| hcheck | 0x11 | every other ID returns `0xfffffffa`; 0x11 replies `{1, 0xfffffede}` and ignores payload content (tested 16 B–4 KiB) |
+| mirlink | 1..N | replies `{2, 0}` for every ID tested (0x0–0x100) |
+| keymaster | 0..8 all accepted by the framework | real semantics only for 1–4 (from the CVE-2016-5349 PoC) |
 
 ### dxhdcp2 dispatcher and handlers (ARM/Thumb addresses)
 
