@@ -55,6 +55,28 @@ by one of: the JavaCard, a signed ATS blob, or HTC's signature.
 2. **External material**: a microSD card (ATS provisioning blob) or HTC's
    service JavaCard.
 
+## Leads examined and parked
+
+* **SunShine APK** (the 237 MB `SunShine-latest.apk` on the Mac):
+  confirmed genuine — dex package `com.streamlinedmobile.sunshine3`
+  (Streamlined Mobile), assets `blob1..blob45`, `bloba1..bloba12`, `zero`,
+  `supersu`. Every blob shares a 20-byte high-entropy prefix
+  (`6bc5685f 581a928f da13b13f b0f9bea4 a2eadf83 e7943e84`) and diverges
+  after it; `zero` (141,024 bytes) has a different prefix. XOR-ing the
+  blobs with `zero` yields a *shared* 30-byte prefix and then noise, so
+  `zero` is not a simple XOR keystream. This is consistent with the public
+  understanding of SunShine: the per-device payload is encrypted and the
+  key/token comes from their (now dead) server. Recovering it offline would
+  mean reversing the whole payload scheme with no known key material —
+  parked, not pursued further.
+* **Pre-verification buffers**: the `download:` transport loop
+  (`0x0f51d5e4`) tracks `remaining`/pointer per USB transfer with a timeout
+  and a 30 MB ceiling; the partition-write loop clamps to
+  `min(remaining, chunk)` and validates the returned length. No bug spotted
+  in either. hboot does not read any AP-writable partition for its security
+  state (it reads board_info/pg1fs/pg2fs/misc + images; only misc is
+  writable, and its data only feeds the audited BCB dispatch).
+
 ## Tools in this repo that made it possible
 
 `tools/xref2.py` (drift-free PC-relative string xrefs, 2730 refs),
