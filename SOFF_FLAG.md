@@ -353,6 +353,57 @@ dump at LBA 0x108000), so this test was non-destructive.
 
 ---
 
+## 10. How the flash chain is ordered (and the new lead)
+
+Traced the flash-target chain (`0x0f51e460`-`0x0f51e710`). Targets are
+compared in this order and each has its own branch:
+
+```
+sbl1 sbl2 sbl3 rpm tz hboot        (bootloader components)
+nbh diagnbh  zip diagzip
+boot recovery system zip
+signature                          (separate: 256-byte blob upload)
+```
+
+* `boot`/`recovery`/`system` call `f528648(payload,len,out)` — an image
+  signature verification — before anything is written.
+* `zip`/`diagzip` strip the first 0x100 bytes (signature block), call
+  `f525fe2(data+0x100, len-0x100, 0, ctx)`, and on success print
+  **"INFOadopting the signature contained in this image..."**.
+* Anything *not* in that list falls through to
+  `f528648(verify)` -> `0xf51c858` (the zimage/rzimage/ramdisk/nbh
+  dispatcher). That is why `flash rzimage` returned
+  `signature verify fail`: the verify happens first.
+* `fastboot flash signature <256-byte blob>` is a real target: it copies a
+  256-byte signature into a global (`FAILsignature not 256 bytes long`
+  otherwise). Combined with "adopting the signature contained in this
+  image", this is how HTC's tool supplies signatures separately from the
+  image.
+
+### The RUU/ZIP update engine (best remaining attack surface)
+
+Strings show a full ZIP update engine with its own parser and zlib:
+
+```
+----IMG.nbh / ----IMG.zip / ----DIAG.zip / --------.zip   ("----" = MID)
+update.zip
+Parsing...[SD ZIP] / Parsing...[downloaded ZIP]
+ZIP Header Checking...  ZIP Info Parsing...  [SD_UPDATE_ERR] No image found in ZIP[%s]
+[ZIP_ERR] inflate fail, zerr=%d, total_out=%lu
+--preload_content=/sdcard/update.zip
+```
+
+A "downloaded ZIP" path exists (RUU mode: `fastboot oem rebootRUU` then
+`fastboot flash zip <file>`), i.e. hboot parses attacker-supplied ZIP data.
+Next step: determine whether the ZIP **header/directory/zlib parsing**
+happens before the signature verification (the log order
+`ZIP Header Checking...` -> `ZIP Info Parsing...` -> signature suggests it
+does). If it does, the ZIP parser is a reachable, fuzzable memory-safety
+surface inside hboot — the same class of bug the Tegra-era "torpedo"
+exploit used to patch hboot images.
+
+---
+
 ## 6. New reachable surface: the `misc` BCB command dispatcher
 
 `misc` (mmcblk0p24) **is writable from Android with root** (measured), and
