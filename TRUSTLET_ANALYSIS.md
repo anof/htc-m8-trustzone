@@ -1,4 +1,45 @@
-# Widevine trustlet — reconnaissance
+# Trustlets on the HTC One (M8) — reconnaissance
+
+## Correction to an earlier version of this file
+
+A first pass used the merged `widevine.img` at file offset `0x3000` as the code
+segment. That is wrong: the `.bXX` parts concatenate after the `.mdt`, so the
+real code segment (`widevine.b02`) begins at merged offset **`0x34b8`**, not
+`0x3000`. Every address derived from the merged file was therefore offset by
+**`0x4b8`**. The analysis itself was sound (it operated on the correct bytes
+within its own window), but the reported code-vaddr offsets were wrong.
+Corrected values: **`memcpy` = `0x1e8a0`**, **`memmove` = `0x1e980`**.
+
+Merge order for `.mdt` + `.bXX` is `mdt, b00, b01, b02, b03`, verified
+byte-exact against the known-good widevine image. `.b02` is the code segment
+and maps to vaddr 0.
+
+## Inventory
+
+Seven trustlet packages ship on this device:
+
+| Trustlet | Merged size | Code size | Location on device | Notes |
+|---|---|---|---|---|
+| `widevine` | 164432 | `0x24a10` | `/system/etc/firmware` | method table at `0x27f14`, 38 cmds `0x61001`–`0x61026` + `0x20003` |
+| `keymaster` | 31772 | `0x4694` | `/system/vendor/firmware` | |
+| `cmnlib` | 122808 | `0x199c4` | `/system/etc/firmware` | Qualcomm shared library |
+| `dxhdcp2` | 130748 | `0x1c954` | `/system/etc/firmware` | HDCP 2.x |
+| `hcheck` | 32660 | `0x4a6c` | `/system/etc/firmware` | **HTC-specific** |
+| `mirlink` | 31776 | `0x4610` | `/system/etc/firmware` | Miracast |
+| `mc_v2` | 172740 | `0x2a000` | `/system/etc/firmware` | **Trustonic MobiCore** — a separate TEE |
+
+Only `widevine` exposes a method table in the 12-byte `{cmd_id, 0,
+(parm_size<<16)|resp_size}` form. The others either use a different table
+layout or are library-style components with no outward command surface
+(`cmnlib` in particular). Note that `mc_v2` is not a Qualcomm QSEE trustlet at
+all — it is Trustonic's MobiCore, an entirely separate TEE implementation that
+coexists on this device.
+
+`hcheck` is the most interesting for our purpose: it is HTC-added, and its
+strings reference "HTC SFS CFG", "HTC SFS key" and "CPRM key rebuild", i.e.
+HTC's secure file system and key-rebuild logic.
+
+## Widevine image structure
 
 The trustlet is the one piece of secure-world code we can actually read: it is
 signed, but it sits on disk in `/firmware`, and it runs in the secure world
@@ -12,7 +53,7 @@ natural next avenue after the SCM handler audit came back clean.
 
 | Segment | File offset | Vaddr | Size | Flags |
 |---|---|---|---|---|
-| code | `0x3000` | `0` | `0x24a10` | RX |
+| code (`.b02`) | `0x34b8` | `0` | `0x24a10` | RX |
 | data | `0x28fcc` | `0x25000` | `0x388` (memsz `0x17d28`) | RW |
 
 It is **not encrypted** — 6.98 bits/byte entropy and the opening bytes are
@@ -59,10 +100,10 @@ is `0x50002`.
 Found by byte-pattern search for the standard ARM memcpy prologue
 (`cmp r2,#3` / `ands ip,r0,#3`), then expressed as code offsets:
 
-| Vaddr | Function |
+| Code offset | Function |
 |---|---|
-| `0x1ed58` | `memcpy` (1718 bytes; `size_t arg3 @ r2`) |
-| `0x1ee38` | `memmove` (backward-copy variant) |
+| `0x1e8a0` | `memcpy` (1718 bytes; `size_t arg3 @ r2`) |
+| `0x1e980` | `memmove` (backward-copy variant) |
 
 137 call sites into `memcpy` were located and mapped to their call sites by
 address.
