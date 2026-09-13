@@ -84,3 +84,38 @@ is the natural next step.
 3. Keep the *write*-primitive requirement in mind: the keymaster
    CVE-2016-5349 primitive is read-only and the XPU limits what it can read,
    so the goal remains a secure-world write (or an XPU/WP reconfiguration).
+
+## Post-2016 CVEs that plausibly still affect this 2016 build
+
+Mined from `trustlets/research/tz_tee_vulnerabilities.csv` + NVD descriptions:
+
+| CVE | what it gives | why it matters here |
+|---|---|---|
+| CVE-2021-35122 | non-secure side can modify **XPU IO-space permission** ("RG permissions") due to missing input validation | a direct path to lifting the XPU restrictions that stop AP writes |
+| CVE-2020-11252 | TZ init **disables xPUs when memory dumps are enabled** | if the dump-enable flag is reachable, the XPU windows open |
+| CVE-2020-11199 | HLOS can map the **IMEM region** (improper access control) | IMEM already accessible to us via a module; would matter for a stock device |
+| CVE-2020-11298 | TOCTOU on shared-memory permissions while a listener callback is pending | memory-corruption primitive in QSEE reachable from HLOS |
+| CVE-2019-14119 | TOCTOU in QTEE | same family, earlier |
+| CVE-2019-10561 | uninitialised locals passed to **SFS API** → invalid pointer dereference | DoS on paper, but an uninitialised *pointer* argument is a potential write primitive given heap grooming |
+| CVE-2019-20590 | integer underflow in the Secure Storage trustlet (Samsung/Qualcomm, SVE-2019-13952) | Check Point fuzzing family; we do not ship `sec_store` |
+
+`ucsb-seclab/boomerang` (the reference work for our working keymaster bug) ships
+exactly **one** exploit — `keymaster_kernel_leak` (read-only). There is no
+public write primitive for keymaster, so the read bug cannot be extended by
+copying published code.
+
+## Fuzzing status after this session
+
+* dxhdcp2 commands 0,1,2,3 × sizes 32/256/2048 with the `smart` generator
+  (every word set to 10 extreme values, rest zero): **no interesting replies,
+  no crash**.
+* widevine: 38 commands × random and structured payloads at declared sizes:
+  **no crash**.
+* hcheck 0x11 × 16 B–4 KiB structured: reply is constant, **no crash**.
+* Total: on the order of 1e5 malformed requests, device never reset.
+
+Conclusion: within what QSEECom allows the normal world to send (declared
+param sizes), these builds look robust. The Check Point-class bugs need the
+TA executed *off-device* (their patched-normal-world + AFL/QEMU setup, steps
+documented in `trustlets/research/checkpoint_road_tz_fuzzing.md`), or a
+different attack surface (QSEOS loader, listener/TOCTOU path, SFS API).
