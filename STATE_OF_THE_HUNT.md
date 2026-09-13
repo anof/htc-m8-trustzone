@@ -280,6 +280,45 @@ This closes the whole WP-skip family of ideas: no writable input, no boot
 mode and no boot command can un-protect the device because nothing in hboot
 ever issues the "clear" vendor operation.
 
+### Last hypothesis examined: "unsigned / zero-signature" images
+
+Facts established:
+
+* TWRP's `recovery-twrp-3.7.0_9-0-m8.img` is a **standard AOSP boot image**
+  (`ANDROID!` magic at offset 0), whereas HTC's stock images carry a
+  0x100-byte HTC block at offset 0 with `ANDROID!` at 0x100. That format
+  difference is why `fastboot flash recovery twrp.img` can never pass the
+  HTC verifier — there is no HTC signature block in the file at all.
+* hboot's flash verifier (`f528648` -> `f52ab08`) is **hboot-local SHA-1**
+  (the `0x14`-byte digest and the SHA-1 `σ1(x) = ROTR17 ^ ROTR19 ^ SHR10`
+  round pattern are visible in `0x0f52ab6a`-`0x0f52ab82`) which is then
+  compared against an RSA-decrypted signature — but the **boot-time**
+  boot/recovery check is TZ-backed (`0x0f514276` -> SMC), so even a bypass
+  of the *flash* verifier would not produce a bootable custom image.
+* The remaining cheap probe (zero the 0x100-byte HTC block of the *stock*
+  recovery dump and try to flash it) was deliberately **not run**: if it
+  were accepted it would overwrite recovery with an image that cannot boot
+  (TZ check) and cannot be restored (no signed stock image can be reflashed
+  from fastboot — the stock dump itself fails the verifier). Risk with no
+  possible payoff.
+
+## Conclusion of the software-only hunt
+
+Every route by which hboot could be made to change its own security state,
+write protected storage, or accept modified code has been traced and
+measured on this device, and all of them are gated by one of:
+
+* HTC's RSA signatures (unlock token, every flash target, RUU packages),
+* the HTC service JavaCard (`writesecureflag`, `writecid`, ATS enable),
+* a signed ATS blob delivered from an SD card,
+* the eMMC write-protect groups, which hboot arms and never clears,
+* TrustZone (boot-image verification, and the XPU that blocks AP writes to
+  the protected partitions).
+
+Remaining options all require something external: HTC's keycard, a microSD
+card with a valid ATS blob, a different (non-Verizon) M8, or a genuine 0-day
+in TrustZone/hboot that this investigation did not find.
+
 ## Strongest remaining lead: the eMMC WP is armed per *boot mode*
 
 Every `partition_write_prot_mmc()` call site is guarded like this
