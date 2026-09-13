@@ -234,6 +234,56 @@ software-defeatable with what is reachable today.
 
 ---
 
+## 7. `fastboot flash` component targets (found, not yet exploited)
+
+The flash-target dispatcher (`0x0f51c960`-`0x0f51ca40`) accepts HTC's
+*component* targets in addition to partition names:
+
+| target | handler |
+|---|---|
+| `zimage`   | `fb_flash_zimage` (`0x0f51ba40`) |
+| `rzimage`  | restore zImage |
+| `ramdisk`  | rebuild the boot image with a new ramdisk |
+| `rramdisk` | restore ramdisk |
+| `nbh`, `diagnbh` | full-image targets |
+
+`fb_flash_zimage` reads the *existing* boot image header from the partition,
+checks an 8-byte magic, and on mismatch logs
+"Cannot find MAGIC word! Skip signature and try again..." and re-reads at
+offset 0x100 before rebuilding the image with the supplied zImage/ramdisk.
+That "skip signature" branch is the most interesting remaining lead: it
+takes attacker-supplied data and (per its name) drops the certificate step.
+
+### Measured caveats (important before trying it)
+
+* A failed `fastboot flash` does **not** damage the target: after three
+  failed attempts (`recovery` twice with TWRP, `recovery` with the stock
+  dump, `misc` with the stock dump, all `signature verify fail`), the live
+  recovery partition still byte-matches the stock dump at LBA 0x108000.
+  hboot verifies before writing.
+* The stock partition dump itself **fails** the flash signature check
+  (`fastboot flash recovery recovery.img` -> `signature verify fail`).
+  So the verifier wants HTC's signed *container*, not a raw partition
+  image — and there is no fastboot-based restore path for boot/recovery.
+
+## 8. Where the lock state is *not*
+
+* The unlock-token success path (`0x0f51de0c`) only responds `OKAY` and
+  calls one function (`0x0f53b698`) which lives in the eMMC-protection
+  code and only reconfigures power rails / protection, i.e. hboot does not
+  write a "now unlocked" byte from that path in a way that was locatable.
+* `*** UNLOCKED ***` / `*** LOCKED ***` / `*** RELOCKED ***` are selected
+  through the `f5030b8(id)` state-query API, and the "HW Security" bit that
+  gates several of these comes from a hardware register read of
+  `0xFC4B83F8` (QFPROM range) — i.e. fuse-backed, not writable storage.
+* The kernel command line hboot generates for this device:
+  `... androidboot.lb=0 uif= ... td.sf=1 ... un.ofs=696 qf.st=1 ...`
+  (`lb` = lock bit, `td.sf` = tamper flag), and note `ats=1` appears there
+  after `fastboot oem ats 1`, so that flag does reach the kernel — but it
+  still did not disable the eMMC write protection.
+
+---
+
 ## 6. New reachable surface: the `misc` BCB command dispatcher
 
 `misc` (mmcblk0p24) **is writable from Android with root** (measured), and
