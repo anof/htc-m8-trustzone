@@ -257,6 +257,29 @@ needed.** Before running it, the safe order is:
    unchanged, the field is not the CID source and the write is safe to take
    further; if it changed, restore from the backup immediately.
 
+### The WP-skip class is now closed: hboot only ever *arms* the protection
+
+Followed the two remaining pieces:
+
+* `partition_verify_prot_mmc` (`0x0f504b40`) walks the protection table
+  (0x18-byte entries) and *test-writes* each protected range, printing
+  `[ERR] partition_verify_prot_mmc: eMMC verify write protect fail` if a
+  range turns out to be writable. It **checks**, it does not re-arm.
+* `partition_write_prot_mmc` (`0x0f504a30`) has **25 call sites**, all in the
+  boot flow (`0x0f56axxx`–`0x0f572xxx`), and every one that was inspected
+  passes `r2 = 1` (the "set" argument). There is no caller that clears, and
+  no `clear`/`unprotect` string anywhere in the image.
+
+So the eMMC write-protect groups are **armed once and never cleared by
+hboot**, and the "skip arming for non-3/0xe boot commands" behaviour only
+affects a device whose protection was never armed (factory state). On this
+device the protection is already armed, which is exactly why the live
+`RebootATS` test changed nothing even though the command path was real.
+
+This closes the whole WP-skip family of ideas: no writable input, no boot
+mode and no boot command can un-protect the device because nothing in hboot
+ever issues the "clear" vendor operation.
+
 ## Strongest remaining lead: the eMMC WP is armed per *boot mode*
 
 Every `partition_write_prot_mmc()` call site is guarded like this
