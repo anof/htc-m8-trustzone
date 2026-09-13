@@ -231,3 +231,42 @@ exemption: even `misc` is signature-checked.
 
 The keycard/JavaCard gate and the eMMC/MPU write protection are not
 software-defeatable with what is reachable today.
+
+---
+
+## 6. New reachable surface: the `misc` BCB command dispatcher
+
+`misc` (mmcblk0p24) **is writable from Android with root** (measured), and
+hboot runs a string dispatcher over a boot-control record at every boot.
+String table (`0x0f50dd00`–`0x0f50e600`):
+
+```
+H_R_PreUpdate      boot-repartition   update-hboot
+update-zip         update-zip-repartition  update-combo
+SetRuuNbhUpdate    EnterSDupdate      EnterBootloader
+ImageUpdateFail    EnterFastboot      Reboot
+RebootATS          EnterMfgkernel     Enter9kRD / Enter9kRD2SD
+Enter9kRD2INTSD    Enter9kRDARB       EnterRPowertest
+EnterInstallCW     Gencheckpt_S/_H/_B DeviceColdBoot
+DeviceWarmBoot     EnterMinikernel    EnterSimlock
+EnterHTMix         EnterHTDdr         Krouter1SPRD …
+```
+
+Each match stores a command code into `config_block + 0x1597C`
+(`0x0f50e3b6`) and then calls the executor at `0x0f530048`. The classic
+recovery trio is visible too (`recovery\n--wipe_all\n`,
+`recovery\n--wipe_data\n`, `format "fat"`).
+
+Consequences:
+
+* The `update-*` codes drive hboot's **RUU/zip engine** ("common/sdupdate",
+  `recovery_flash_zip`, `[RECOVERY_ERR] security check failed!`,
+  `adopting the signature contained in this image...`). Sourcing it needs
+  an SD card (`sd_check_image_error: HBoot3/Boot/Recovery image …`) and the
+  images are signed, but the parser is a reachable attacker-controlled
+  surface once a card is present.
+* `RebootATS` sets boot-command 0x2e; it is the only ATS-related boot
+  command in the table.
+* Writing `misc` is therefore the cheapest way to steer hboot's boot-time
+  behaviour from the AP, and it is the recommended starting point for any
+  further hboot fuzzing/RE.
