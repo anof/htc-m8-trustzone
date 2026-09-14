@@ -22,11 +22,15 @@ Plan for ~1 hour of work, most of it waiting on reboots.
 
 * The phone, a USB cable, a Mac or Linux box with `adb` + `fastboot`
   (platform-tools) and `python3`.
-* **Root on the phone, once.**  On stock 4.17.605.17 (Android 5.0.1) that
-  means KingRoot 4.5.0 (`com.kingroot.kinguser-4.5.0-120-minAPI8.apk`,
-  kept locally, not committed here).  Temp root is enough — but see the
-  warning in §3: once you start the S-OFF step, do not reboot until the
-  flag is written.
+* **Root on the phone — twice.**  Once to write the S-OFF flag, and once
+  more after the reboot that follows it, to write the unlock flag (the
+  reboot destroys temporary root).  On stock 4.17.605.17 (Android 5.0.1)
+  that means KingRoot 4.5.0
+  (`com.kingroot.kinguser-4.5.0-120-minAPI8.apk`, kept locally, not
+  committed here); §4 also gives a root-free alternative (a boot image with
+  `ro.secure=0` flashed through RUU mode).  See the warning in §3: once you
+  start the S-OFF step, do not reboot until the flag is written — the
+  window in which the card is writable belongs to that boot session.
 * An LLVM cross toolchain (`brew install llvm` on a Mac).  Binaries are not
   committed here (`.gitignore` drops `*.ko`, `*.o`, `*.img`), so build the
   three pieces once with `tools/build_emmcwp.sh`,
