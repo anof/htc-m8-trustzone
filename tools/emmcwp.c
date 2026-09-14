@@ -499,6 +499,74 @@ static int do_flagsoff(int fd)
 	return 0;
 }
 
+/* The lock state is dword 1 of pg1fs_security (LBA 2148).  hboot's own
+ * writer (f52faa0) stores "HTCU" for unlocked, "HTCL" for relocked and 0
+ * for locked; anything else decodes as locked.  This writes "HTCU". */
+#define UNLOCK_TAG 0x55435448u	/* "HTCU" */
+
+static int do_flagunlock(int fd)
+{
+	u8 orig[512];
+	int i, f;
+	u32 tag;
+
+	memset(orig, 0, 512);
+	if (cmd(fd, 17, FLAG_LBA, 0, MMC_RSP_R1 | MMC_CMD_ADTC, 512, 1, orig,
+		"read security", NULL) < 0)
+		return -1;
+	f = open("/data/local/tmp/security_lba_pre_unlock.bin", 0x241, 0644);
+	if (f >= 0) {
+		write(f, orig, 512);
+		close(f);
+		printf("  backup -> /data/local/tmp/security_lba_pre_unlock.bin\n");
+	}
+	tag = (u32)orig[4] | ((u32)orig[5] << 8) | ((u32)orig[6] << 16) |
+	      ((u32)orig[7] << 24);
+	printf("  before: security_level=%u unlock=0x%08x jtag_dis=%u\n",
+	       orig[0], tag, orig[8]);
+
+	if (orig[0] > 1) {
+		printf("  ABORT: card reads S-ON (level=%u) - refusing\n",
+		       orig[0]);
+		return -1;
+	}
+	for (i = 12; i < 64; i++)
+		if (orig[i]) break;
+	if (orig[1] || orig[2] || orig[3] || orig[8] != 1 || orig[9] ||
+	    orig[10] || orig[11] || i != 64) {
+		printf("  ABORT: LBA %d does not look like pg1fs_security\n",
+		       FLAG_LBA);
+		return -1;
+	}
+	if (tag == UNLOCK_TAG) {
+		printf("  already UNLOCKED (HTCU) - nothing to do\n");
+		return 0;
+	}
+
+	orig[4] = 0x48;	/* H */
+	orig[5] = 0x54;	/* T */
+	orig[6] = 0x43;	/* C */
+	orig[7] = 0x55;	/* U */
+	if (do_wr(fd, FLAG_LBA, orig, "write UNLOCK tag") < 0)
+		return -1;
+
+	memset(buf, 0, 512);
+	cmd(fd, 17, FLAG_LBA, 0, MMC_RSP_R1 | MMC_CMD_ADTC, 512, 1, buf,
+	    "read back", NULL);
+	for (i = 0; i < 512; i++) {
+		if (buf[i] != orig[i]) {
+			printf("  MISMATCH at byte %d (wrote %02x read %02x)\n",
+			       i, orig[i], buf[i]);
+			return -1;
+		}
+	}
+	tag = (u32)buf[4] | ((u32)buf[5] << 8) | ((u32)buf[6] << 16) |
+	      ((u32)buf[7] << 24);
+	printf("  unlock tag now = 0x%08x (%s)\n", tag,
+	       tag == UNLOCK_TAG ? "HTCU / UNLOCKED" : "unexpected");
+	return tag == UNLOCK_TAG ? 0 : -1;
+}
+
 static int do_seq(int fd)
 {
 	u8 e[512];
@@ -606,6 +674,22 @@ int main(int argc, char **argv)
 		do_info(fd);
 		return 0;
 	}
+	if (!strcmp(mode, "stat")) {
+		/* CMD13: print the card state; exit 0 only when in TRAN (4) */
+		u32 r1 = 0;
+		cmd(fd, 13, 0, 0, MMC_RSP_R1, 0, 0, NULL, "SEND_STATUS", &r1);
+		printf("  card state = %u %s\n", (r1 >> 9) & 0xf,
+		       (((r1 >> 9) & 0xf) == 4) ? "(TRAN, idle)" : "(busy)");
+		return ((r1 >> 9) & 0xf) != 4;
+	}
+	if (!strcmp(mode, "sw")) {
+		/* generic CMD6 write-byte: emmcwp sw <ext_csd_byte> <value> */
+		u32 idx = (u32)parse_num(argv[2]);
+		u32 val = (u32)parse_num(argv[3]);
+		do_switch(fd, 3 /* write byte */, idx, val, "CMD6 write");
+		printf("  EXT_CSD[%u] = %u\n", idx, val);
+		return 0;
+	}
 	if (!strcmp(mode, "rd"))
 		return do_rd(fd, (u32)parse_num(argv[2]),
 			     argc > 3 ? (int)parse_num(argv[3]) : 1, NULL) < 0;
@@ -616,12 +700,28 @@ int main(int argc, char **argv)
 		int r = do_wtest(fd, (u32)parse_num(argv[2]));
 		return r < 0;
 	}
+	if (!strcmp(mode, "wr")) {
+		/* raw one-sector write: emmcwp wr <lba> <hex>  (512 B) */
+		const char *hex = argv[3];
+		unsigned n = (unsigned)strlen(hex) / 2, i;
+		if (n > 512) n = 512;
+		memset(buf, 0, 512);
+		for (i = 0; i < n; i++) {
+			unsigned v = 0;
+			sscanf(hex + 2 * i, "%2x", &v);
+			buf[i] = (u8)v;
+		}
+		return do_wr(fd, (u32)parse_num(argv[2]), buf,
+			     "raw sector write") < 0;
+	}
 	if (!strcmp(mode, "unprotect"))
 		return do_unprotect(fd, (u32)parse_num(argv[2])) < 0;
 	if (!strcmp(mode, "flagread"))
 		return do_flagread(fd) < 0;
 	if (!strcmp(mode, "flagsoff"))
 		return do_flagsoff(fd) < 0;
+	if (!strcmp(mode, "flagunlock"))
+		return do_flagunlock(fd) < 0;
 	if (!strcmp(mode, "seq"))
 		return do_seq(fd) < 0;
 	printf("unknown mode %s\n", mode);

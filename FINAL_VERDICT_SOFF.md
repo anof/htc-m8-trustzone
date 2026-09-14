@@ -1,5 +1,19 @@
 # Final verdict: software-only S-OFF on this Verizon HTC One (M8)
 
+> **CORRECTION (later the same day): this verdict was wrong.**
+> S-OFF *was* achieved in software.  The missing piece was that
+> `regulator_force_disable()` on `pm8941_l20` stops at the regulator
+> framework's `use_count`; calling the *driver* ops directly (the same thing
+> `_regulator_force_disable()` does) really does cut the card's VCC and the
+> rail does come back, so the card power-cycles, `PWR_WP` clears, and
+> LBA 2148 becomes writable for one window.  That is `kmod/emmcpwr/emmcpwr12.c`
+> and it produced `security: off` / `secure_flag: 0`.
+> With S-OFF in place the bootloader lock flag was then written directly —
+> see **[BOOTLOADER_UNLOCK_FLAG.md](BOOTLOADER_UNLOCK_FLAG.md)** — and the
+> device now reports `device unlocked!!` and runs LineageOS 19.1.
+> The analysis below is kept as the record of what had been measured up to
+> that point.
+
 Date: 2026-09-13 (final session).  Device: HTC6525LVW `HT45FSF02406`, hboot
 3.19.0.0000, **LOCKED / S-ON**, Android 5.0.1, temp root via KingRoot.
 
