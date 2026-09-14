@@ -1,13 +1,47 @@
-# HTC One (M8) TrustZone — SCM interface reversing
+# HTC One (M8) Verizon — software-only S-OFF **and** bootloader unlock
 
-Reverse engineering notes and tooling for HTC's MSM8974 TrustZone build on the
-HTC One (M8) Verizon (`HTC6525LVW`, MID `0P6B20000`, CID `VZW__001`,
-hboot `3.19.0.0000`, TZ `TZ.BF.2.0-2.0.0114`).
+Reverse engineering notes and tooling for the HTC One (M8) Verizon
+(`HTC6525LVW`, MID `0P6B20000`, CID `VZW__001`, hboot `3.19.0.0000`,
+TZ `TZ.BF.2.0-2.0.0114`), plus everything needed to repeat the result on
+another device.
 
-The original goal was software-only S-OFF (bootloader unlock) to install
-LineageOS. **That was not achieved.** What was achieved is a working
-normal-world → TrustZone client and a full map of the SCM interface, plus a
-concrete explanation of why the published exploit does not work on this build.
+**Result: this phone is S-OFF *and* UNLOCKED, with no HTCdev token, no
+keycard, no paid tool and no EDL.**
+
+```
+fastboot getvar security            -> security: off
+fastboot oem readsecureflag         -> secure_flag: 0
+fastboot oem refurbish unlockstatus -> device unlocked!!
+TWRP 3.7.0-9 flashed, LineageOS 19.1 (Android 12) installed and booting
+```
+
+## Start here
+
+**[`SECOND_DEVICE_HOWTO.md`](SECOND_DEVICE_HOWTO.md)** — the end-to-end
+runbook: get root, power-cycle the eMMC to clear its write protection, write
+the S-OFF flag, write the lock flag, then flash TWRP and LineageOS. Every
+tool it references lives in this repo, and every gotcha (including the
+boot-image cmdline trap that breaks recovery) is written down.
+
+The short version of what was learned:
+
+* **S-OFF** is dword 0 of the `security` file in `pg1fs` (LBA 2148).  It is
+  protected by the card's power-on write protect, which hboot re-arms on
+  every boot and which only a genuine VCC power cycle clears.  Cutting that
+  rail looks impossible from the regulator API — until you call the
+  regulator's *driver* ops directly (`tools/kmod_emmcpwr/emmcpwr12.c`).
+* **The bootloader lock** is dword 1 of the same file: `"HTCU"` = unlocked,
+  `"HTCL"` = relocked, `0` = locked.  With S-OFF in place hboot no longer
+  arms the write protection, so it is a plain 4-byte write.
+* hboot appends ~900 bytes of its own text to the kernel cmdline in a
+  1024-byte buffer, so boot images with long cmdlines (TWRP, Lineage) kill
+  the bootloader — shorten the cmdline to ~25–60 bytes first.
+
+## TrustZone work (the research that came before)
+
+Along the way this repo also documents a working normal-world → TrustZone
+client and a full map of the SCM interface, plus a concrete explanation of
+why the published `MSM8974_exploit` does not transfer to this HTC build.
 
 ## Summary of results
 
@@ -98,7 +132,14 @@ the inputs are described above.
 
 ## Status
 
-The S-OFF goal is **not met** and this is not a vulnerability disclosure that
-grants anything — the interface is hardened. The value here is the map, the
-tooling, and the negative result. Any *other* bug in this SCM surface is now
-directly testable, which it wasn't before.
+Both goals are **met**: the device is S-OFF and the bootloader is unlocked,
+entirely from software, and it runs LineageOS 19.1.  The TrustZone route was
+a dead end on this build (the address validator is hardened), but the eMMC
+write-protection route was not: see
+[`EMMC_WP_VOLATILE.md`](EMMC_WP_VOLATILE.md),
+[`SOFF_FLAG.md`](SOFF_FLAG.md) and
+[`BOOTLOADER_UNLOCK_FLAG.md`](BOOTLOADER_UNLOCK_FLAG.md).
+
+`FINAL_VERDICT_SOFF.md` is kept as the record of the intermediate negative
+result; it carries a correction at the top explaining exactly which
+assumption was wrong.
