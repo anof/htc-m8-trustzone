@@ -64,6 +64,24 @@ for f in pg1fs hboot sbl1 tz rpm; do adb pull /data/local/tmp/$f.img; done
 
 ## 2. Get the tools onto the phone
 
+### Getting root in the first place
+
+On stock `4.17.605.17` the only root we found without unlocking is KingRoot's
+temporary root:
+
+```
+adb install com.kingroot.kinguser-4.5.0-120-minAPI8.apk
+python3 edl_tools/ensure_root.py      # wakes the screen, taps "TRY TO ROOT"
+adb shell su -c id                    # uid=0(root)
+```
+
+`ensure_root.py` is unattended: it reads the UI hierarchy, taps the root
+button whenever it appears, waits for `/system/xbin/su`, and saves
+screenshots under `/tmp/root_shots/`.  The root is **temporary** — it is lost
+on every reboot — but that is enough: the S-OFF flag is written to flash, so
+after the reboot in §3 you simply re-root once more to do the unlock write
+(§4).
+
 ```
 # one-time build (outputs land next to their sources)
 tools/build_emmcwp.sh
@@ -172,6 +190,14 @@ pg1fs partition differed from the pre-S-OFF dump by exactly one byte.
 | module loads but the cut is one-way (device freezes) | you are running the older `regulator_force_disable` variant; use `emmcpwr12.ko`, which calls the driver ops directly |
 
 ## 4. Phase 2 — bootloader unlock
+
+**You need root again here.**  The reboot in §3 wiped KingRoot's temporary
+root (that is expected — the S-OFF flag itself is on flash and survives).
+Either re-run the KingRoot flow from §2, or boot a rooted image: build one
+with `tools/build_root_boot.py <stock boot.img> <out.img>` (it flips
+`ro.secure`/`ro.adb.secure` so adbd runs as root), pack it with
+`tools/build_ruu_zip.py`, and flash it through RUU mode — that is the route
+used on the device this repo was written on, and it needs no APK at all.
 
 The lock state is **dword 1 of the same `pg1fs_security` file (LBA 2148,
 byte offset 4)**.  hboot's own writer stores `"HTCU"` (`48 54 43 55`) for
