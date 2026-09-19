@@ -23,6 +23,12 @@ the S-OFF flag, write the lock flag, then flash TWRP and LineageOS. Every
 tool it references lives in this repo, and every gotcha (including the
 boot-image cmdline trap that breaks recovery) is written down.
 
+**[`METHODOLOGY.md`](METHODOLOGY.md)** — how the route was *found*: the
+researcher-playbook phase and why it dead-ended, how hboot was reversed
+(PC-relative string xrefs, 2,730 anchors, no decompiler), how "the write is
+silently dropped" was measured, and where the power-cycle idea came from
+(the vendor's own regulator code, not an exploit write-up).
+
 The short version of what was learned:
 
 * **S-OFF** is dword 0 of the `security` file in `pg1fs` (LBA 2148).  It is
